@@ -27,6 +27,29 @@ The expensive step happens once and produces a reviewable artifact. Everything
 downstream reads that artifact instead of re-deriving the context. See
 [docs/sdd-workflow.md](docs/sdd-workflow.md).
 
+## One-time GitHub setup
+
+`scripts/bootstrap-github.sh` creates the repository, pushes `main`, and builds
+the whole planning surface: sprint milestones, labels, a 24-issue backlog derived
+from `.squad/plans/00-index.md`, and a Projects v2 board with `Sprint`,
+`Priority`, and `Estimate` fields.
+
+```bash
+gh auth login                                     # needs repo, project, workflow scopes
+./scripts/bootstrap-github.sh                     # 5 × 2-week sprints, starting next Monday
+
+DRY_RUN=1 ./scripts/bootstrap-github.sh           # preview, change nothing
+SPRINT_WEEKS=1 SPRINT_COUNT=8 ./scripts/bootstrap-github.sh
+SPRINT_START=2026-09-07 ./scripts/bootstrap-github.sh
+```
+
+Every step is idempotent — re-running skips what already exists. If `gh auth`
+lacks the `project` scope the script warns before touching anything:
+
+```bash
+gh auth refresh -h github.com -s project -s repo -s workflow
+```
+
 ## Getting started
 
 **Prerequisites:** [.NET 10 SDK](https://dotnet.microsoft.com/download), Node 18+
