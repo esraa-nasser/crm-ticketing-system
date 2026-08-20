@@ -1,0 +1,65 @@
+## .NET
+bin/
+obj/
+artifacts/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+project.lock.json
+project.fragment.lock.json
+
+## Test / coverage
+[Tt]est[Rr]esult*/
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+coverage*.json
+coverage*.xml
+coverage*.info
+
+## Publish output
+publish/
+PublishProfiles/*.pubxml.user
+*.azurePubxml
+
+## Rider / VS / VS Code
+.vs/
+.idea/
+*.DotSettings.user
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+## OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+## Local configuration and secrets — never commit
+*.local.json
+appsettings.*.local.json
+secrets.json
+.env
+.env.*
+!.env.example
+
+## Node (SquadKit console / tooling)
+node_modules/
+npm-debug.log*
+
+# Managed by squad-kit — do not edit this block
+.squad/secrets.yaml
+.squad/stories/**/attachments/
+.squad/.trash/
+.squad/.last-run.json
+.squad/.last-copy-prompt.md
+.squad/runs/
+# End squad-kit block

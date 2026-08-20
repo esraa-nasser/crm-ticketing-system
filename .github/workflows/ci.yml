@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore CrmTicketing.slnx
+
+      - name: Build
+        run: dotnet build CrmTicketing.slnx --configuration Release --no-restore
+
+      - name: Test
+        run: >-
+          dotnet test CrmTicketing.slnx
+          --configuration Release
+          --no-build
+          --logger "trx;LogFileName=test-results.trx"
+          --collect:"XPlat Code Coverage"
+
+      - name: Publish client
+        run: dotnet publish src/CrmTicketing.Client --configuration Release --no-build --output ./artifacts/client
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: '**/TestResults/**'
+          if-no-files-found: ignore
+
+  sdd-guard:
+    name: Spec-driven guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install squad-kit
+        run: npm install -g squad-kit
+
+      - name: SquadKit workspace health check
+        run: squad doctor
+
+      - name: Assert no secrets are committed
+        run: |
+          if git ls-files --error-unmatch .squad/secrets.yaml > /dev/null 2>&1; then
+            echo "::error::.squad/secrets.yaml is tracked by git. Remove it from the index."
+            exit 1
+          fi
+          echo "No SquadKit secrets file is tracked."

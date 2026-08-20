@@ -1,0 +1,13 @@
+@CrmTicketing.Api_HostAddress = http://localhost:5280
+
+### Liveness probe
+GET {{CrmTicketing.Api_HostAddress}}/health
+Accept: text/plain
+
+### Build / environment info
+GET {{CrmTicketing.Api_HostAddress}}/api/system/info
+Accept: application/json
+
+### OpenAPI document (Development only)
+GET {{CrmTicketing.Api_HostAddress}}/openapi/v1.json
+Accept: application/json

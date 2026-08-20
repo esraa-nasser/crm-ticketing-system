@@ -1,0 +1,56 @@
+@page "/diagnostics"
+@using CrmTicketing.Client.Services
+@using CrmTicketing.Shared.Contracts
+@inject SystemApiClient SystemApi
+
+<PageTitle>Diagnostics</PageTitle>
+
+<h1>Diagnostics</h1>
+
+<p>Calls <code>GET /api/system/info</code> to verify the client-to-API wiring.</p>
+
+@if (_error is not null)
+{
+    <div class="alert alert-danger" role="alert">
+        <strong>Could not reach the API.</strong>
+        <p class="mb-1">@_error</p>
+        <p class="mb-0 small">
+            Check that <code>CrmTicketing.Api</code> is running and that
+            <code>Api:BaseAddress</code> in <code>wwwroot/appsettings.json</code>
+            matches its URL, and that this origin is listed under
+            <code>Cors:AllowedOrigins</code> in the API's settings.
+        </p>
+    </div>
+}
+else if (_info is null)
+{
+    <p><em>Contacting the API…</em></p>
+}
+else
+{
+    <table class="table table-sm w-auto">
+        <tbody>
+            <tr><th scope="row">Service</th><td>@_info.Name</td></tr>
+            <tr><th scope="row">Version</th><td>@_info.Version</td></tr>
+            <tr><th scope="row">Environment</th><td>@_info.Environment</td></tr>
+            <tr><th scope="row">Server time (UTC)</th><td>@_info.ServerTimeUtc.ToString("u")</td></tr>
+        </tbody>
+    </table>
+}
+
+@code {
+    private ApiInfoResponse? _info;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _info = await SystemApi.GetInfoAsync();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            _error = ex.Message;
+        }
+    }
+}

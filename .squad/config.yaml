@@ -1,0 +1,16 @@
+version: 1
+project:
+  name: CRM Ticketing System
+  primaryLanguage: C#
+  projectRoots:
+    - .
+tracker:
+  type: github
+  workspace: esraa-nasser
+  project: crm-ticketing-system
+naming:
+  includeTrackerId: true
+  globalSequence: true
+agents:
+  - claude-code
+  - copilot

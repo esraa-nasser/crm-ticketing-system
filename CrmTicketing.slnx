@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CrmTicketing.Api/CrmTicketing.Api.csproj" />
+    <Project Path="src/CrmTicketing.Client/CrmTicketing.Client.csproj" />
+    <Project Path="src/CrmTicketing.Domain/CrmTicketing.Domain.csproj" />
+    <Project Path="src/CrmTicketing.Infrastructure/CrmTicketing.Infrastructure.csproj" />
+    <Project Path="src/CrmTicketing.Shared/CrmTicketing.Shared.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CrmTicketing.Api.Tests/CrmTicketing.Api.Tests.csproj" />
+    <Project Path="tests/CrmTicketing.Domain.Tests/CrmTicketing.Domain.Tests.csproj" />
+  </Folder>
+</Solution>

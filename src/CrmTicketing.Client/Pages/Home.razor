@@ -1,0 +1,31 @@
+@page "/"
+
+<PageTitle>CRM Ticketing</PageTitle>
+
+<h1>CRM Ticketing System</h1>
+
+<p class="lead">
+    Blazor WebAssembly client for the CRM ticketing API. This project is built with
+    spec-driven development: every feature starts as a story intake, becomes a plan,
+    and only then becomes code.
+</p>
+
+<div class="alert alert-secondary" role="alert">
+    <strong>Scaffold state.</strong> No domain features are implemented yet. The
+    ticketing and CRM scope is defined in
+    <code>.squad/stories/</code> and planned into <code>.squad/plans/</code>
+    before any of it is written.
+</div>
+
+<h2 class="h5 mt-4">Where things live</h2>
+<ul>
+    <li><code>src/CrmTicketing.Domain</code> — entities, value objects, invariants. No framework dependencies.</li>
+    <li><code>src/CrmTicketing.Shared</code> — request/response contracts shared by client and API.</li>
+    <li><code>src/CrmTicketing.Infrastructure</code> — persistence and external integrations.</li>
+    <li><code>src/CrmTicketing.Api</code> — HTTP surface, controllers, composition root.</li>
+    <li><code>src/CrmTicketing.Client</code> — this app: pages, components, typed API clients.</li>
+</ul>
+
+<p>
+    Use <a href="diagnostics">Diagnostics</a> to confirm the client can reach the API.
+</p>
