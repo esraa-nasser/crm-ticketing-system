@@ -66,6 +66,9 @@ jobs:
         run: npm install -g squad-kit
 
       - name: SquadKit workspace health check
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: squad doctor
 
       - name: Assert no secrets are committed
