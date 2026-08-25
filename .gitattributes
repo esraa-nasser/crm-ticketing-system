@@ -1,5 +1,10 @@
 * text=auto eol=lf
 
+# Shell scripts MUST stay LF even on Windows checkouts. With CRLF, bash fails
+# with "bad interpreter: /bin/bash^M" before running a single line.
+*.sh        text eol=lf
+*.bash      text eol=lf
+
 *.cs        text diff=csharp
 *.razor     text
 *.csproj    text
