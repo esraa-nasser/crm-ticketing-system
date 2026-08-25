@@ -34,21 +34,39 @@ the whole planning surface: sprint milestones, labels, a 24-issue backlog derive
 from `.squad/plans/00-index.md`, and a Projects v2 board with `Sprint`,
 `Priority`, and `Estimate` fields.
 
-```bash
-gh auth login                                     # needs repo, project, workflow scopes
-./scripts/bootstrap-github.sh                     # 5 × 2-week sprints, starting next Monday
+It needs only **curl and git** — both already on your machine (Git Bash ships
+curl). The GitHub CLI is used automatically if it happens to be installed and
+logged in, but is never required.
 
-DRY_RUN=1 ./scripts/bootstrap-github.sh           # preview, change nothing
+```bash
+# classic token with repo + project + workflow scopes:
+#   https://github.com/settings/tokens
+export GITHUB_TOKEN=ghp_xxxxxxxx
+
+DRY_RUN=1 ./scripts/bootstrap-github.sh    # preview, change nothing
+./scripts/bootstrap-github.sh              # 5 × 2-week sprints from next Monday
+```
+
+Options:
+
+```bash
 SPRINT_WEEKS=1 SPRINT_COUNT=8 ./scripts/bootstrap-github.sh
 SPRINT_START=2026-09-07 ./scripts/bootstrap-github.sh
+SKIP_PUSH=1 ./scripts/bootstrap-github.sh          # already pushed by hand
+VISIBILITY=public ./scripts/bootstrap-github.sh
 ```
 
-Every step is idempotent — re-running skips what already exists. If `gh auth`
-lacks the `project` scope the script warns before touching anything:
+Every step is idempotent — a re-run skips whatever already exists, so a partial
+failure is safe to resume.
 
-```bash
-gh auth refresh -h github.com -s project -s repo -s workflow
-```
+The token must be a **classic** PAT: fine-grained tokens cannot access Projects
+owned by a personal account. The script detects that and warns rather than
+failing silently.
+
+Pushing only the code needs no token at all — create the empty repo on
+github.com, then `git remote add origin …` and `git push -u origin main`.
+Milestones, issues, and the board are GitHub API objects rather than git objects,
+which is why they need the script.
 
 ## Getting started
 
