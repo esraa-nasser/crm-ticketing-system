@@ -46,3 +46,6 @@ dotnet_diagnostic.CA2007.severity = none   # ConfigureAwait not required in ASP.
 # CA1716 flags "Shared" as a VB reserved word. This is a C#-only solution and
 # CrmTicketing.Shared is the agreed project name in docs/architecture.md.
 dotnet_diagnostic.CA1716.severity = none
+[tests/**.cs]
+dotnet_diagnostic.CA1707.severity = none
+dotnet_diagnostic.CA1822.severity = none
