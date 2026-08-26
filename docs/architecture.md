@@ -88,6 +88,13 @@ These are settled; a plan that wants to change one must amend the constitution.
   classes and snake_case names. Chosen for relational integrity across tickets,
   contacts, and accounts, and for first-class JSONB should custom fields be
   needed later.
+- **Migrations live under `Persistence/Migrations/`**, generated with:
+  `dotnet ef migrations add <Name> --project src/CrmTicketing.Infrastructure --startup-project src/CrmTicketing.Api --output-dir Persistence/Migrations`
+  The `--output-dir` flag is required only for the first migration; later ones follow it.
+- **Generated code is exempt from style rules.** `.editorconfig` marks
+  `[**/Migrations/**.cs]` as `generated_code = true`, because EF emits
+  block-scoped namespaces that IDE0161 would otherwise turn into build errors
+  under TreatWarningsAsErrors. Hand-written code is unaffected — verified.
 
 ## Decisions deliberately deferred
 
