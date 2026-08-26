@@ -40,6 +40,7 @@ separately, sharing only serialisable contracts.
 | `src/CrmTicketing.Client` | blazorwasm | UI, routing, typed API clients | `Shared` |
 | `tests/CrmTicketing.Domain.Tests` | xunit | Unit tests for domain rules | `Domain` |
 | `tests/CrmTicketing.Api.Tests` | xunit | Controller and endpoint tests | `Api` |
+| `tests/CrmTicketing.Infrastructure.Tests` | xunit | Persistence wiring and naming-convention tests | `Infrastructure` |
 
 The dependency rules are binding — see Section II of
 [the constitution](constitution.md).
@@ -83,13 +84,16 @@ These are settled; a plan that wants to change one must amend the constitution.
   `HttpClient` directly.
 - **File-scoped namespaces**, `sealed` by default, primary constructors where
   they read cleanly.
+- **PostgreSQL via Npgsql/EF Core**, mapped with `IEntityTypeConfiguration<T>`
+  classes and snake_case names. Chosen for relational integrity across tickets,
+  contacts, and accounts, and for first-class JSONB should custom fields be
+  needed later.
 
 ## Decisions deliberately deferred
 
 Left to the first planned stories, because they depend on scope that has not been
 agreed yet:
 
-- Data store and ORM (`Infrastructure/Persistence/` is a stub).
 - Authentication and authorisation scheme, and the role model.
 - The ticket aggregate: status machine, SLA model, assignment rules.
 - Whether customers/accounts are a separate aggregate or part of ticketing.

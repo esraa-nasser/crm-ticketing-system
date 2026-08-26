@@ -1,4 +1,5 @@
 using CrmTicketing.Api.Configuration;
+using CrmTicketing.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -8,6 +9,7 @@ builder.Services.AddProblemDetails();
 builder.Services.AddOpenApi();
 builder.Services.AddHealthChecks();
 builder.Services.AddBlazorClientCors(builder.Configuration);
+builder.Services.AddPersistence(builder.Configuration);
 
 var app = builder.Build();
 
