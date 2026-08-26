@@ -20,3 +20,4 @@ written. Nothing below is planned yet — no plan file exists for any of them.
 | `persistence` | `crm-ticketing-foundation` | Data store, ORM, migrations — currently a stub |
 
 Run `squad new-story <feature-slug>` to open one of these, then `/squad-plan` it.
+| `persistence` | [00-overview.md](persistence/00-overview.md) | 02 |
