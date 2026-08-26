@@ -49,3 +49,8 @@ dotnet_diagnostic.CA1716.severity = none
 [tests/**.cs]
 dotnet_diagnostic.CA1707.severity = none
 dotnet_diagnostic.CA1822.severity = none
+# EF Core generates migrations with block-scoped namespaces and its own layout.
+# Marking them as generated code exempts them from style rules that would
+# otherwise become build errors under TreatWarningsAsErrors.
+[**/Migrations/**.cs]
+generated_code = true
