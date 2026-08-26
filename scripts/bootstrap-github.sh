@@ -24,7 +24,7 @@
 #
 # Every step is idempotent: re-running skips whatever already exists.
 #
-set -euo pipefail
+set -eu
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 OWNER="${OWNER:-esraa-nasser}"
@@ -99,12 +99,14 @@ api_rest() {  # api_rest <METHOD> <path-without-leading-slash> [json-body]
         -H "Authorization: Bearer ${GITHUB_TOKEN}" \
         -H "Accept: application/vnd.github+json" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
-        -d "$body" "${API_BASE}/${path}" 2>/dev/null || true
+        -H "Content-Type: application/json" \
+        "${API_BASE}/${path}" --data-binary @- 2>/dev/null <<< "$body" || true
     else
       curl -sS -X "$method" \
         -H "Authorization: Bearer ${GITHUB_TOKEN}" \
         -H "Accept: application/vnd.github+json" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
+        -H "Content-Type: application/json" \
         "${API_BASE}/${path}" 2>/dev/null || true
     fi
   fi
@@ -119,7 +121,7 @@ api_graphql() {  # api_graphql <query-string>
     curl -sS -X POST \
       -H "Authorization: Bearer ${GITHUB_TOKEN}" \
       -H "Content-Type: application/json" \
-      -d "$payload" "$GRAPHQL_URL" 2>/dev/null || true
+      "$GRAPHQL_URL" --data-binary @- 2>/dev/null <<< "$payload" || true
   fi
 }
 
@@ -368,7 +370,7 @@ Feature slug: \`${slug}\` · Target: **Sprint ${sprint}**"
   fi
 
   req="{\"title\":$(json_escape "$title"),\"body\":$(json_escape "$full_body"),\"labels\":${labels_json}${ms_part}}"
-  resp=$(api_rest POST "repos/${OWNER}/${REPO}/issues" "$req")
+  printf "%s" "$req" > /tmp/req.json; resp=$(api_rest POST "repos/${OWNER}/${REPO}/issues" "$req")
   node_id=$(jstr "$resp" "node_id")
 
   if [[ -n "$node_id" ]]; then
@@ -388,7 +390,7 @@ PROJECT_URL=""
 if [[ "$DRY_RUN" == "1" ]]; then
   skip "skipped under DRY_RUN"
 else
-  owner_json=$(api_graphql "query { user(login: \\\"${OWNER}\\\") { id } }")
+  owner_json=$(api_graphql "query { user(login: \"${OWNER}\") { id } }")
   OWNER_ID=$(jstr "$owner_json" "id")
 
   if [[ -z "$OWNER_ID" ]]; then
@@ -396,7 +398,7 @@ else
     warn "A classic token with the 'project' scope is required; fine-grained"
     warn "tokens cannot access Projects owned by a personal account."
   else
-    proj_json=$(api_graphql "mutation { createProjectV2(input: {ownerId: \\\"${OWNER_ID}\\\", title: \\\"${PROJECT_TITLE}\\\"}) { projectV2 { id url } } }")
+    proj_json=$(api_graphql "mutation { createProjectV2(input: {ownerId: \"${OWNER_ID}\", title: \"${PROJECT_TITLE}\"}) { projectV2 { id url } } }")
     PROJECT_ID=$(jstr "$proj_json" "id")
     PROJECT_URL=$(jstr "$proj_json" "url")
 
@@ -408,31 +410,31 @@ else
       # GitHub's native Iteration field is the ideal shape for sprints, but
       # createProjectV2Field accepts only TEXT / NUMBER / DATE / SINGLE_SELECT.
       # Attempt it anyway so the outcome is recorded rather than assumed.
-      iter=$(api_graphql "mutation { createProjectV2Field(input: {projectId: \\\"${PROJECT_ID}\\\", dataType: ITERATION, name: \\\"Sprint\\\"}) { projectV2Field { ... on ProjectV2IterationField { id } } } }")
+      iter=$(api_graphql "mutation { createProjectV2Field(input: {projectId: \"${PROJECT_ID}\", dataType: ITERATION, name: \"Sprint\"}) { projectV2Field { ... on ProjectV2IterationField { id } } } }")
       if grep -q '"errors"' <<< "$iter"; then
         warn "ITERATION not creatable via API (expected) — using a single-select"
         opts="["
         colors=(BLUE GREEN YELLOW ORANGE PURPLE PINK RED GRAY)
         for ((i = 0; i < SPRINT_COUNT; i++)); do
           [[ $i -gt 0 ]] && opts+=", "
-          opts+="{name: \\\"${SPRINT_TITLES[$i]}\\\", color: ${colors[$(( i % 8 ))]}, description: \\\"${SPRINT_STARTS[$i]} to ${SPRINT_ENDS[$i]}\\\"}"
+          opts+="{name: \"${SPRINT_TITLES[$i]}\", color: ${colors[$(( i % 8 ))]}, description: \"${SPRINT_STARTS[$i]} to ${SPRINT_ENDS[$i]}\"}"
         done
         opts+="]"
-        r=$(api_graphql "mutation { createProjectV2Field(input: {projectId: \\\"${PROJECT_ID}\\\", dataType: SINGLE_SELECT, name: \\\"Sprint\\\", singleSelectOptions: ${opts}}) { projectV2Field { ... on ProjectV2SingleSelectField { id } } } }")
+        r=$(api_graphql "mutation { createProjectV2Field(input: {projectId: \"${PROJECT_ID}\", dataType: SINGLE_SELECT, name: \"Sprint\", singleSelectOptions: ${opts}}) { projectV2Field { ... on ProjectV2SingleSelectField { id } } } }")
         grep -q '"errors"' <<< "$r" && warn "'Sprint' field failed" || ok "single-select 'Sprint' with ${SPRINT_COUNT} options"
       else
         ok "native ITERATION field created"
       fi
 
-      r=$(api_graphql "mutation { createProjectV2Field(input: {projectId: \\\"${PROJECT_ID}\\\", dataType: SINGLE_SELECT, name: \\\"Priority\\\", singleSelectOptions: [{name: \\\"P0 — blocker\\\", color: RED, description: \\\"Stops the sprint\\\"}, {name: \\\"P1 — high\\\", color: ORANGE, description: \\\"Sprint commitment\\\"}, {name: \\\"P2 — normal\\\", color: YELLOW, description: \\\"Planned\\\"}, {name: \\\"P3 — low\\\", color: GRAY, description: \\\"Nice to have\\\"}]}) { projectV2Field { ... on ProjectV2SingleSelectField { id } } } }")
+      r=$(api_graphql "mutation { createProjectV2Field(input: {projectId: \"${PROJECT_ID}\", dataType: SINGLE_SELECT, name: \"Priority\", singleSelectOptions: [{name: \"P0 — blocker\", color: RED, description: \"Stops the sprint\"}, {name: \"P1 — high\", color: ORANGE, description: \"Sprint commitment\"}, {name: \"P2 — normal\", color: YELLOW, description: \"Planned\"}, {name: \"P3 — low\", color: GRAY, description: \"Nice to have\"}]}) { projectV2Field { ... on ProjectV2SingleSelectField { id } } } }")
       grep -q '"errors"' <<< "$r" && skip "'Priority' skipped" || ok "'Priority' field"
 
-      r=$(api_graphql "mutation { createProjectV2Field(input: {projectId: \\\"${PROJECT_ID}\\\", dataType: NUMBER, name: \\\"Estimate\\\"}) { projectV2Field { ... on ProjectV2Field { id } } } }")
+      r=$(api_graphql "mutation { createProjectV2Field(input: {projectId: \"${PROJECT_ID}\", dataType: NUMBER, name: \"Estimate\"}) { projectV2Field { ... on ProjectV2Field { id } } } }")
       grep -q '"errors"' <<< "$r" && skip "'Estimate' skipped" || ok "'Estimate' field"
 
       added=0
       for nid in "${ISSUE_NODE_IDS[@]}"; do
-        r=$(api_graphql "mutation { addProjectV2ItemById(input: {projectId: \\\"${PROJECT_ID}\\\", contentId: \\\"${nid}\\\"}) { item { id } } }")
+        r=$(api_graphql "mutation { addProjectV2ItemById(input: {projectId: \"${PROJECT_ID}\", contentId: \"${nid}\"}) { item { id } } }")
         grep -q '"errors"' <<< "$r" || added=$(( added + 1 ))
       done
       ok "${added} issue(s) added to the board"
