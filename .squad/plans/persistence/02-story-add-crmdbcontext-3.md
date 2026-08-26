@@ -218,6 +218,18 @@ Copy `tests/CrmTicketing.Domain.Tests/CrmTicketing.Domain.Tests.csproj` verbatim
 
 Register it: `dotnet sln CrmTicketing.slnx add tests/CrmTicketing.Infrastructure.Tests`
 
+**File: `src/CrmTicketing.Infrastructure/CrmTicketing.Infrastructure.csproj`** *(amendment — see log)*
+
+`ToSnakeCase` is `internal`, so the test assembly needs access:
+
+```xml
+  <ItemGroup>
+    <InternalsVisibleTo Include="CrmTicketing.Infrastructure.Tests" />
+  </ItemGroup>
+```
+
+This is the correct trade: `ToSnakeCase` is an implementation detail with no callers outside the assembly, and widening it to `public` purely to satisfy a test would put test convenience ahead of API design. The grant is scoped to one named test assembly.
+
 ### 8 — Unit tests
 
 **Create file: `tests/CrmTicketing.Infrastructure.Tests/Persistence/SnakeCaseNamingTests.cs`**
@@ -259,7 +271,7 @@ Half-applied risk: if the package is added but `AddPersistence` is not, the solu
 ## Verification Steps
 
 1. **Backend builds:** `dotnet build CrmTicketing.slnx` from the repository root — zero warnings, zero errors. Warnings are errors here.
-2. **Tests pass:** `dotnet test CrmTicketing.slnx` — all four test projects green, with no PostgreSQL running.
+2. **Tests pass:** `dotnet test CrmTicketing.slnx` — all **three** test projects green (Domain.Tests, Api.Tests, Infrastructure.Tests), with no PostgreSQL running.
 3. **Domain stays clean:** `grep -cE '(Project|Package)Reference' src/CrmTicketing.Domain/CrmTicketing.Domain.csproj` → `0`.
 4. **No inline versions:** `grep -rn 'PackageReference' --include=*.csproj . | grep -i version` → no output.
 5. **API stays ignorant of EF:** `grep -rn 'CrmDbContext\|EntityFrameworkCore\|Npgsql' src/CrmTicketing.Api/` → matches only in `CrmTicketing.Api.csproj`? **No** — expect *no output at all*. Any hit is a defect.
@@ -280,6 +292,17 @@ Half-applied risk: if the package is added but `AddPersistence` is not, the solu
 - [ ] `docs/architecture.md` records PostgreSQL under *Decisions taken*, removes it from *Decisions deferred*, and lists the new test project.
 - [ ] `dotnet build CrmTicketing.slnx` is clean under `TreatWarningsAsErrors`.
 - [ ] `dotnet test CrmTicketing.slnx` passes with no database running, including `ToSnakeCase` theory cases and the model-builds test.
-- [ ] Overview `00-overview.md` updated with this story.
+- [x] Overview `00-overview.md` updated with this story. *(Satisfied during planning — not an implementation task. See amendment log.)*
 
 **STOP HERE. Report to the user and wait for confirmation before proceeding to Story 03 (issue #4, migrations and seed data).**
+
+---
+
+## Amendment log
+
+| Date | Change | Why |
+|------|--------|-----|
+| 2026-08-26 | Task 7 gains the `InternalsVisibleTo` item group. | The plan required `ToSnakeCase` (internal) be unit-tested directly but never granted the test assembly access, so the Test Plan could not compile as written. Raised by the executor rather than worked around — correct behaviour. |
+| 2026-08-26 | Verification step 2: "four test projects" → three. | Miscount in the original plan. The solution has Domain.Tests, Api.Tests, and the new Infrastructure.Tests. |
+| 2026-08-26 | Done Criteria: overview item marked satisfied at planning time. | `00-overview.md` is written by the planning session, not the executor. Listing it as an implementation criterion was a category error and put the executor in conflict with its read-only scope. |
+| 2026-08-26 | Abstraction question resolved: the `AddPersistence` seam stands. | Confirmed as the intended reading. A domain-declared interface with zero callers would violate constitution §VII; it is revisited when the first aggregate gives it a consumer. |

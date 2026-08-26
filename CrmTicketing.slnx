@@ -9,5 +9,6 @@
   <Folder Name="/tests/">
     <Project Path="tests/CrmTicketing.Api.Tests/CrmTicketing.Api.Tests.csproj" />
     <Project Path="tests/CrmTicketing.Domain.Tests/CrmTicketing.Domain.Tests.csproj" />
+    <Project Path="tests/CrmTicketing.Infrastructure.Tests/CrmTicketing.Infrastructure.Tests.csproj" />
   </Folder>
 </Solution>
