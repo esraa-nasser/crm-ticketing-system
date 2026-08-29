@@ -6,7 +6,7 @@ One row per feature folder under `.squad/plans/`. `NN` continues as a global exe
 |---------|----------|----------|
 | `crm-ticketing-foundation` | [00-overview.md](crm-ticketing-foundation/00-overview.md) | 01 |
 | `persistence` | [00-overview.md](persistence/00-overview.md) | 02 |
-| `ticketing-core` | [00-overview.md](ticketing-core/00-overview.md) | 03 |
+| `ticketing-core` | [00-overview.md](ticketing-core/00-overview.md) | 03–04 |
 
 ## Planned next
 

@@ -122,8 +122,7 @@ public sealed class Ticket : Entity
 
         if (Status == TicketStatus.Closed)
         {
-            throw new InvalidOperationException(
-                $"A ticket with status {TicketStatus.Closed} cannot be assigned.");
+            throw new TicketClosedException(Status, "assigned");
         }
 
         AssigneeId = assigneeId;
@@ -137,8 +136,7 @@ public sealed class Ticket : Entity
     {
         if (Status == TicketStatus.Closed)
         {
-            throw new InvalidOperationException(
-                $"A ticket with status {TicketStatus.Closed} cannot be unassigned.");
+            throw new TicketClosedException(Status, "unassigned");
         }
 
         AssigneeId = null;
@@ -148,6 +146,25 @@ public sealed class Ticket : Entity
     public void ChangePriority(TicketPriority priority, DateTimeOffset at)
     {
         Priority = priority;
+        UpdatedAt = at;
+    }
+
+    /// <summary>
+    /// Corrects the descriptive fields. Legal in any status - a closed ticket may
+    /// still have a typo fixed.
+    /// </summary>
+    public void UpdateDetails(TicketTitle title, string description, string? category, DateTimeOffset at)
+    {
+        ArgumentNullException.ThrowIfNull(title);
+
+        // Normalise into locals first: a bad description must not leave the ticket
+        // holding a new title and the old body.
+        var normalisedDescription = NormaliseDescription(description);
+        var normalisedCategory = NormaliseCategory(category);
+
+        Title = title;
+        Description = normalisedDescription;
+        Category = normalisedCategory;
         UpdatedAt = at;
     }
 
