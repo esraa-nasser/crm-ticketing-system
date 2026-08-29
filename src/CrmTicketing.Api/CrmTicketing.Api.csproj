@@ -10,6 +10,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="CrmTicketing.Api.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\CrmTicketing.Shared\CrmTicketing.Shared.csproj" />
     <ProjectReference Include="..\CrmTicketing.Domain\CrmTicketing.Domain.csproj" />
     <ProjectReference Include="..\CrmTicketing.Infrastructure\CrmTicketing.Infrastructure.csproj" />

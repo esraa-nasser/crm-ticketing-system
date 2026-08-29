@@ -1,3 +1,4 @@
+using CrmTicketing.Domain.Tickets;
 using CrmTicketing.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -36,6 +37,7 @@ public static class DependencyInjection
         }
 
         services.AddDbContext<CrmDbContext>(options => options.UseNpgsql(connectionString));
+        services.AddScoped<ITicketRepository, TicketRepository>();
 
         return services;
     }

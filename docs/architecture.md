@@ -91,6 +91,12 @@ These are settled; a plan that wants to change one must amend the constitution.
 - **Migrations live under `Persistence/Migrations/`**, generated with:
   `dotnet ef migrations add <Name> --project src/CrmTicketing.Infrastructure --startup-project src/CrmTicketing.Api --output-dir Persistence/Migrations`
   The `--output-dir` flag is required only for the first migration; later ones follow it.
+- **Persistence is reached through `ITicketRepository`**, declared in
+  `CrmTicketing.Domain/Tickets/` and implemented in
+  `CrmTicketing.Infrastructure/Persistence/`. The interface is framework-free —
+  no EF type and no `IQueryable` in any signature. `SaveChangesAsync` sits on the
+  repository; there is no separate unit of work until a transaction must span two
+  aggregates.
 - **Generated code is exempt from style rules.** `.editorconfig` marks
   `[**/Migrations/**.cs]` as `generated_code = true`, because EF emits
   block-scoped namespaces that IDE0161 would otherwise turn into build errors
