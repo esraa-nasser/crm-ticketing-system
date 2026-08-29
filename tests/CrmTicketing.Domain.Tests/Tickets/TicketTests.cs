@@ -170,21 +170,6 @@ public sealed class TicketTests
     }
 
     [Fact]
-    public void Assign_RejectsClosedTicket()
-    {
-        var ticket = TicketInStatus(TicketStatus.Closed);
-
-        // The exact type matters: DomainExceptionHandler maps TicketClosedException
-        // to 409, and anything else to 500. A looser assertion would let a revert to
-        // a plain InvalidOperationException pass here while the endpoint regressed.
-        var ex = Assert.Throws<TicketClosedException>(
-            () => ticket.Assign(Guid.NewGuid(), LaterAt));
-
-        Assert.Contains(nameof(TicketStatus.Closed), ex.Message, StringComparison.Ordinal);
-        Assert.IsNotType<InvalidTicketTransitionException>(ex);
-    }
-
-    [Fact]
     public void Assign_SetsAssigneeAndAdvancesUpdatedAt()
     {
         var ticket = OpenTicket();
@@ -224,6 +209,9 @@ public sealed class TicketTests
     {
         var ticket = TicketInStatus(TicketStatus.Closed);
 
+        // The exact type matters: DomainExceptionHandler maps TicketClosedException
+        // to 409 and anything else to 500, so a looser assertion would let a revert
+        // to a plain InvalidOperationException pass while the endpoint regressed.
         var ex = Assert.Throws<TicketClosedException>(() => ticket.Assign(Guid.NewGuid(), LaterAt));
 
         Assert.Equal("assigned", ex.Operation);
