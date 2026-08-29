@@ -93,7 +93,7 @@ The table, exactly:
 | `Resolved` | `Open`, `Closed` |
 | `Closed` | *(none)* |
 
-Eleven legal pairs out of twenty-five. Back it with a `FrozenDictionary<TicketStatus, FrozenSet<TicketStatus>>` initialised once in a static constructor. `IsAllowed(x, x)` returns **false** — a transition to the current status is a no-op the caller should not be making, and silently allowing it hides bugs.
+Ten legal pairs out of twenty-five. Back it with a `FrozenDictionary<TicketStatus, FrozenSet<TicketStatus>>` initialised once in a static constructor. `IsAllowed(x, x)` returns **false** — a transition to the current status is a no-op the caller should not be making, and silently allowing it hides bugs.
 
 `AllowedFrom` exists so a future UI can render only legal actions without duplicating the table. It returns an empty set for `Closed`.
 
@@ -235,7 +235,7 @@ No `--output-dir` this time — EF follows the existing `Persistence/Migrations`
 
 **Create file: `tests/CrmTicketing.Domain.Tests/Tickets/TicketStatusTransitionsTests.cs`**
 
-4. **The full matrix.** A `[Theory]` with `MemberData` generating all 25 `(from, to)` pairs from `Enum.GetValues<TicketStatus>()`, asserting `IsAllowed` matches an expected set declared independently in the test. Do **not** import the production table into the test — write the eleven legal pairs out by hand, or the test proves only that the code equals itself.
+4. **The full matrix.** A `[Theory]` with `MemberData` generating all 25 `(from, to)` pairs from `Enum.GetValues<TicketStatus>()`, asserting `IsAllowed` matches an expected set declared independently in the test. Do **not** import the production table into the test — write the ten legal pairs out by hand, or the test proves only that the code equals itself.
 5. `[Fact]` `AllowedFrom(TicketStatus.Closed)` is empty.
 
 **Create file: `tests/CrmTicketing.Domain.Tests/Tickets/TicketTests.cs`**
@@ -243,7 +243,7 @@ No `--output-dir` this time — EF follows the existing `Persistence/Migrations`
 6. `Open` rejects: `Guid.Empty` requester, null/empty/whitespace description, a 10001-character description, a 101-character category.
 7. `Open` produces `Status == New` and `Priority == Normal` by default, with `CreatedAt == UpdatedAt`.
 8. Category of `"  "` normalises to `null`.
-9. `TransitionTo` over all 25 pairs: the 11 legal ones set `Status` and advance `UpdatedAt`; the other 14 throw `InvalidTicketTransitionException` carrying the right `From` and `To`.
+9. `TransitionTo` over all 25 pairs: the 10 legal ones set `Status` and advance `UpdatedAt`; the other 15 throw `InvalidTicketTransitionException` carrying the right `From` and `To`.
 10. `Assign` rejects `Guid.Empty`; `Assign` on a `Closed` ticket throws `InvalidOperationException`; a successful `Assign` sets `AssigneeId` and advances `UpdatedAt`.
 11. `Unassign` clears `AssigneeId`.
 
@@ -288,11 +288,11 @@ Half-applied risk: if the migration is generated but the configuration is subseq
 ## Done Criteria
 
 - [ ] `TicketStatus` has five members, `TicketPriority` has four, both with explicit values.
-- [ ] `TicketStatusTransitions` declares 11 legal pairs; `Closed` has none.
+- [ ] `TicketStatusTransitions` declares 10 legal pairs; `Closed` has none.
 - [ ] `TicketTitle` trims then validates, rejecting empty and >200.
 - [ ] `Ticket` derives from `Entity`, exposes no public setter, and starts every ticket at `New`.
 - [ ] Every mutator takes a `DateTimeOffset` and updates `UpdatedAt`; the domain never reads a clock.
-- [ ] `TransitionTo` throws `InvalidTicketTransitionException` for all 14 illegal pairs, carrying `From` and `To`.
+- [ ] `TransitionTo` throws `InvalidTicketTransitionException` for all 15 illegal pairs, carrying `From` and `To`.
 - [ ] `Assign` rejects `Guid.Empty` and rejects closed tickets.
 - [ ] `TicketConfiguration` is discovered automatically; `CrmDbContext.cs` is unchanged.
 - [ ] Enums persist as strings; the table is `ticket` with snake_case columns.
