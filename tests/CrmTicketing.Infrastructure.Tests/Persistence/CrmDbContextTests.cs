@@ -1,3 +1,4 @@
+using CrmTicketing.Domain.Tickets;
 using CrmTicketing.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -24,10 +25,43 @@ public sealed class CrmDbContextTests
     }
 
     [Fact]
-    public void Model_HasNoEntityTypes()
+    public void Model_ContainsTicket()
     {
         using var context = CreateContext();
 
-        Assert.Empty(context.Model.GetEntityTypes());
+        Assert.NotNull(context.Model.FindEntityType(typeof(Ticket)));
+    }
+
+    [Fact]
+    public void Ticket_MapsToSnakeCaseTable()
+    {
+        using var context = CreateContext();
+
+        var entityType = context.Model.FindEntityType(typeof(Ticket));
+        Assert.NotNull(entityType);
+        Assert.Equal("ticket", entityType.GetTableName());
+
+        var columns = entityType.GetProperties()
+            .Select(p => p.GetColumnName())
+            .ToList();
+
+        Assert.Contains("requester_id", columns);
+        Assert.Contains("created_at", columns);
+        Assert.Contains("assignee_id", columns);
+    }
+
+    [Theory]
+    [InlineData(nameof(Ticket.Status))]
+    [InlineData(nameof(Ticket.Priority))]
+    public void Status_And_Priority_AreStoredAsStrings(string propertyName)
+    {
+        using var context = CreateContext();
+
+        var entityType = context.Model.FindEntityType(typeof(Ticket));
+        Assert.NotNull(entityType);
+
+        var property = entityType.FindProperty(propertyName);
+        Assert.NotNull(property);
+        Assert.Equal(typeof(string), property.GetProviderClrType());
     }
 }
