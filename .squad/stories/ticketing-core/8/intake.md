@@ -62,8 +62,8 @@ follow, and gives ApplyConfigurationsFromAssembly its first configuration to fin
 - [ ] A newly constructed Ticket has Status == New regardless of what the caller
       passes, and Priority == Normal when none is supplied.
 - [ ] TransitionTo enforces the full matrix. The test enumerates all 25
-      (from, to) pairs - not a sample - asserting the 11 legal ones succeed and
-      the other 14 throw InvalidTicketTransitionException.
+      (from, to) pairs - not a sample - asserting the 10 legal ones succeed and
+      the other 15 throw InvalidTicketTransitionException.
 - [ ] Closed is terminal: every TransitionTo from Closed throws.
 - [ ] Assign rejects Guid.Empty, and rejects assigning a ticket in Closed.
 - [ ] The transition table appears exactly once in the solution.
