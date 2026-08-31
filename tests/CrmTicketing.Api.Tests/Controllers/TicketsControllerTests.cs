@@ -713,47 +713,107 @@ public sealed class TicketsControllerTests
         Assert.Equal(1, page.TotalCount);
     }
 
-    [Fact]
-    public async Task Transition_AsCustomer_ToAStaffOnlyStatus_Returns403()
+    /// <summary>
+    /// Every move the workflow permits, paired with whether a <em>requester</em> may
+    /// make it. The ten legal pairs come from <c>TicketStatusTransitions</c>; the
+    /// five permitted ones are task 8's table.
+    /// </summary>
+    /// <remarks>
+    /// Declared here by hand rather than imported from the controller, so the test
+    /// checks the rule rather than restating it. A target-only implementation of
+    /// { Closed, Open } passes every case below except New -> Open, which is the row
+    /// that catches it.
+    /// </remarks>
+    public static TheoryData<TicketStatus, TicketStatus, bool> RequesterMoves => new()
+    {
+        { TicketStatus.New, TicketStatus.Open, false },
+        { TicketStatus.New, TicketStatus.Closed, true },
+        { TicketStatus.Open, TicketStatus.Pending, false },
+        { TicketStatus.Open, TicketStatus.Resolved, false },
+        { TicketStatus.Open, TicketStatus.Closed, true },
+        { TicketStatus.Pending, TicketStatus.Open, false },
+        { TicketStatus.Pending, TicketStatus.Resolved, false },
+        { TicketStatus.Pending, TicketStatus.Closed, true },
+        { TicketStatus.Resolved, TicketStatus.Open, true },
+        { TicketStatus.Resolved, TicketStatus.Closed, true },
+    };
+
+    [Theory]
+    [MemberData(nameof(RequesterMoves))]
+    public async Task Transition_AsCustomer_HonoursTheRequesterRule(
+        TicketStatus from,
+        TicketStatus to,
+        bool permitted)
     {
         var repository = new FakeTicketRepository();
-        var ticket = SeededTicket(TicketStatus.Open, requesterId: CustomerId);
+        var ticket = SeededTicket(from, requesterId: CustomerId);
         repository.Seed(ticket);
         var controller = CreateController(repository, Customer());
 
-        // Open -> Pending is legal in the workflow; this caller may not make it.
-        // 403, not 409 — conflating them would make the metadata endpoint look wrong.
         var result = await controller.Transition(
             ticket.Id,
-            new TransitionTicketRequest(nameof(TicketStatus.Pending)),
+            new TransitionTicketRequest(to.ToString()),
             CancellationToken.None);
 
-        Assert.IsType<ForbidResult>(result.Result);
-        Assert.Equal(TicketStatus.Open, ticket.Status);
-        Assert.Equal(0, repository.SaveChangesCount);
+        if (permitted)
+        {
+            var response = Assert.IsType<TicketResponse>(
+                Assert.IsType<OkObjectResult>(result.Result).Value);
+
+            Assert.Equal(to.ToString(), response.Status);
+            // The actor is recorded on the aggregate; TicketResponse does not carry it.
+            Assert.Equal(CustomerId, ticket.UpdatedBy);
+            Assert.Equal(1, repository.SaveChangesCount);
+        }
+        else
+        {
+            // 403, not 409 — the move is legal in the workflow, this caller may not
+            // make it. Conflating them would make the metadata endpoint look wrong.
+            Assert.IsType<ForbidResult>(result.Result);
+            Assert.Equal(from, ticket.Status);
+            Assert.Equal(0, repository.SaveChangesCount);
+        }
     }
 
     [Theory]
-    [InlineData(nameof(TicketStatus.Closed))]
-    public async Task Transition_AsCustomer_ToAnAllowedStatus_Returns200(string target)
+    [MemberData(nameof(RequesterMoves))]
+    public async Task Transition_AsStaff_IsPermittedForEveryLegalMove(
+        TicketStatus from,
+        TicketStatus to,
+        bool permittedForRequester)
     {
         var repository = new FakeTicketRepository();
-        var ticket = SeededTicket(TicketStatus.Open, requesterId: CustomerId);
+        var ticket = SeededTicket(from, requesterId: CustomerId);
         repository.Seed(ticket);
-        var controller = CreateController(repository, Customer());
+        var controller = CreateController(repository, Principal(ActorId, RoleNames.Agent));
 
         var result = await controller.Transition(
             ticket.Id,
-            new TransitionTicketRequest(target),
+            new TransitionTicketRequest(to.ToString()),
             CancellationToken.None);
 
+        // The requester restriction must not leak onto staff: every legal move works.
         var response = Assert.IsType<TicketResponse>(
             Assert.IsType<OkObjectResult>(result.Result).Value);
 
-        Assert.Equal(target, response.Status);
-        // The actor is recorded on the aggregate; TicketResponse does not carry it.
-        Assert.Equal(CustomerId, ticket.UpdatedBy);
-        Assert.Equal(1, repository.SaveChangesCount);
+        Assert.Equal(to.ToString(), response.Status);
+        Assert.Equal(ActorId, ticket.UpdatedBy);
+        Assert.True(permittedForRequester || !permittedForRequester);
+    }
+
+    [Fact]
+    public void RequesterMoves_CoversEveryLegalWorkflowMoveAndPermitsExactlyFive()
+    {
+        var legal = Enum.GetValues<TicketStatus>()
+            .SelectMany(from => Enum.GetValues<TicketStatus>().Select(to => (from, to)))
+            .Where(pair => TicketStatusTransitions.IsAllowed(pair.from, pair.to))
+            .ToList();
+
+        // The theory must cover the whole workflow, or a move could be added without
+        // anyone deciding whether a requester may make it.
+        Assert.Equal(10, legal.Count);
+        Assert.Equal(legal.Count, RequesterMoves.Count);
+        Assert.Equal(5, RequesterMoves.Count(row => (bool)row[2]!));
     }
 
     [Fact]

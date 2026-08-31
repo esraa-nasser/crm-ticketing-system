@@ -53,15 +53,16 @@ public static class DependencyInjection
     }
 
     /// <summary>
-    /// Seeds the application roles. Idempotent: safe to call on every startup.
+    /// Seeds the application roles and, when one is configured, the first Admin
+    /// account. Idempotent: safe to call on every startup.
     /// </summary>
     /// <remarks>
     /// A sibling to <see cref="AddPersistence"/> so the API composition root keeps
     /// naming exactly one Infrastructure extension and no Identity type. Opens its own
-    /// scope because <c>RoleManager</c> is scoped and the root provider cannot resolve
-    /// it.
+    /// scope because <c>RoleManager</c> and <c>UserManager</c> are scoped and the root
+    /// provider cannot resolve them.
     /// </remarks>
-    public static async Task SeedIdentityRolesAsync(
+    public static async Task SeedIdentityAsync(
         this IServiceProvider services,
         CancellationToken cancellationToken)
     {
@@ -70,7 +71,7 @@ public static class DependencyInjection
         using var scope = services.GetRequiredService<IServiceScopeFactory>().CreateScope();
 
         await IdentitySeeder
-            .SeedRolesAsync(scope.ServiceProvider, cancellationToken)
+            .SeedAsync(scope.ServiceProvider, cancellationToken)
             .ConfigureAwait(false);
     }
 }

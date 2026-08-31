@@ -243,7 +243,7 @@ public sealed class TicketsController(
         // 403, not 409: the move is legal in the workflow, this caller is simply not
         // permitted to make it. An authorisation rule at the boundary — the
         // transition table stays the single declaration of what is legal for anyone.
-        if (!User.IsStaff() && !RequesterAllowedTransitions.Contains(target))
+        if (!User.IsStaff() && !RequesterAllowedTransitions.Contains((ticket.Status, target)))
         {
             return Forbid();
         }
@@ -315,11 +315,30 @@ public sealed class TicketsController(
                 .Select(target => target.ToString())
                 .ToList())));
 
-    // What a requester may do to their own ticket: withdraw it, or reject a
-    // resolution. Everything else is staff-only. An authorisation rule, deliberately
-    // not a second transition table.
-    private static readonly HashSet<TicketStatus> RequesterAllowedTransitions =
-        [TicketStatus.Closed, TicketStatus.Open];
+    /// <summary>
+    /// The (from, to) moves a requester may make on their own ticket: withdraw it
+    /// from any live status, or reject a resolution by reopening it.
+    /// </summary>
+    /// <remarks>
+    /// Source-aware, and the distinction is load-bearing. A target-only set of
+    /// { Closed, Open } would permit New to Open, letting a requester mark their own
+    /// untriaged ticket as being worked. Open means an agent has picked it up; a
+    /// customer setting it asserts staff activity that is not happening, and anything
+    /// later keyed off the move into Open inherits that false signal. The only
+    /// legitimate route to Open for a requester is rejecting a resolution.
+    ///
+    /// An authorisation rule at the API boundary, deliberately not a second
+    /// transition table: TicketStatusTransitions stays the one declaration of what is
+    /// legal for anyone.
+    /// </remarks>
+    private static readonly HashSet<(TicketStatus From, TicketStatus To)> RequesterAllowedTransitions =
+    [
+        (TicketStatus.New, TicketStatus.Closed),
+        (TicketStatus.Open, TicketStatus.Closed),
+        (TicketStatus.Pending, TicketStatus.Closed),
+        (TicketStatus.Resolved, TicketStatus.Closed),
+        (TicketStatus.Resolved, TicketStatus.Open),
+    ];
 
     private ObjectResult TicketNotFound() => Problem(
         statusCode: StatusCodes.Status404NotFound,
