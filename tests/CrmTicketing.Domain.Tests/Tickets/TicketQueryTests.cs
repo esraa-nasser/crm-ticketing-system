@@ -12,7 +12,7 @@ public sealed class TicketQueryTests
     [InlineData(-5, TicketQuery.DefaultPageSize)]
     [InlineData(10, 10)]
     public void Create_ClampsPageSize(int requested, int expected) =>
-        Assert.Equal(expected, TicketQuery.Create(pageSize: requested).PageSize);
+        Assert.Equal(expected, TicketQuery.Create(TicketAccess.All(), pageSize: requested).PageSize);
 
     [Theory]
     [InlineData(0, 1)]
@@ -20,7 +20,7 @@ public sealed class TicketQueryTests
     [InlineData(1, 1)]
     [InlineData(7, 7)]
     public void Create_ClampsPage(int requested, int expected) =>
-        Assert.Equal(expected, TicketQuery.Create(page: requested).Page);
+        Assert.Equal(expected, TicketQuery.Create(TicketAccess.All(), page: requested).Page);
 
     [Theory]
     [InlineData(1, 25, 0)]
@@ -29,7 +29,7 @@ public sealed class TicketQueryTests
     [InlineData(-4, -1, 0)]
     public void Skip_IsPageOffsetAndNeverNegative(int page, int pageSize, int expected)
     {
-        var query = TicketQuery.Create(page: page, pageSize: pageSize);
+        var query = TicketQuery.Create(TicketAccess.All(), page: page, pageSize: pageSize);
 
         Assert.Equal(expected, query.Skip);
         Assert.True(query.Skip >= 0);
@@ -43,6 +43,7 @@ public sealed class TicketQueryTests
         var requester = Guid.NewGuid();
 
         var query = TicketQuery.Create(
+            TicketAccess.All(),
             TicketStatus.Pending,
             TicketPriority.Urgent,
             assignee,
@@ -61,7 +62,7 @@ public sealed class TicketQueryTests
     [Fact]
     public void Create_DefaultsToAnUnfilteredFirstPage()
     {
-        var query = TicketQuery.Create();
+        var query = TicketQuery.Create(TicketAccess.All());
 
         Assert.Null(query.Status);
         Assert.Null(query.Priority);

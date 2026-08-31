@@ -13,7 +13,11 @@
 
 The tasks below are ordered so the solution compiles at the end of each numbered group, not so they can be done in any order. Two groups are large enough to commit separately:
 
-1. **Tasks 1–4** — Identity, roles, sign-in, configuration. Adds packages and a migration; changes no existing behaviour. The solution builds and every existing test still passes at the end of this group.
+1. **Tasks 1–4** — Identity, roles, sign-in, configuration. Adds packages; **generates no migration** — the migration is task 10 and covers the Identity tables, both `ticket` columns, and the foreign key as one unit, so generating a partial one here would only have to be discarded. The solution builds and every existing test still passes at the end of this group.
+
+   **It is not, however, independently *mergeable*.** The seeding call added in task 3 runs at startup and queries a table that only task 10's migration creates, so between the end of this group and task 10 **the API does not start**. No test reveals this, because no test boots the host. Commit group 1 on the feature branch as a checkpoint — worth doing before task 5 breaks 44 call sites — but **do not merge it to `main` alone**; `main` would carry an API that cannot run. The whole story merges as one.
+
+   This supersedes any earlier claim that group 1 "changes no existing behaviour". It changes startup behaviour deliberately: task 2's revision chose an awaited call precisely so the ordering dependency fails where someone can act on it.
 2. **Tasks 5–7** — actor threading and row-level filtering. **This is the breaking group:** 44 call sites of the `Ticket` mutators stop compiling the moment task 5 lands, and story 04's controller tests change behaviour in task 7. Nothing builds mid-group; finish it before running the suite.
 3. **Tasks 8–10** — authorisation attributes, the client, documentation.
 
@@ -121,15 +125,69 @@ One declaration of the three role names, for the same reason `TicketStatusTransi
 **Create file: `src/CrmTicketing.Infrastructure/Identity/IdentitySeeder.cs`**
 
 ```csharp
-public static class IdentitySeeder
+internal static class IdentitySeeder
 {
-    public static Task SeedRolesAsync(IServiceProvider services, CancellationToken cancellationToken);
+    internal static Task SeedRolesAsync(IServiceProvider services, CancellationToken cancellationToken);
 }
 ```
+
+**Create the public entry point in `src/CrmTicketing.Infrastructure/DependencyInjection.cs`**, beside `AddPersistence`:
+
+```csharp
+public static Task SeedIdentityRolesAsync(
+    this IServiceProvider services,
+    CancellationToken cancellationToken);
+```
+
+It opens a scope through `IServiceScopeFactory` — `RoleManager` is scoped and the
+root provider cannot resolve it — and delegates to `IdentitySeeder`.
+
+**Why an extension rather than calling `IdentitySeeder` from `Program.cs`.** The
+API composition root already calls exactly one Infrastructure extension,
+`AddPersistence`, and names no persistence type. A sibling extension keeps that
+property: `IdentitySeeder`, `ApplicationRole`, and `RoleManager` stay invisible to
+`CrmTicketing.Api`, and `IdentitySeeder` itself becomes `internal` to enforce it.
+
+**Why not an `IHostedService` registered inside `AddPersistence`.** It would keep
+`Program.cs` untouched, and no test boots the host so it would not affect the
+suite — but roles cannot be seeded before the Identity tables exist, and this
+project applies migrations manually rather than at startup. A hosted service makes
+that ordering implicit and surfaces a failure as a background exception detached
+from the composition that caused it. An awaited call at the composition root makes
+the dependency visible and lets it fail where someone can act on it.
 
 For each name in `RoleNames.All`, create the role only when `RoleExistsAsync` is false. **Idempotent by construction** — the acceptance criterion is that re-running startup does not duplicate them, and a `CreateAsync` without the existence check throws on the second run.
 
 Roles are seeded, never database-editable: a role name appears in a policy in code, so adding one is a code change. Same reasoning that made `TicketPriority` a fixed enum in story 03.
+
+### 2b — The first Admin
+
+**Without this the story is unusable.** `POST /api/auth/users` requires an Admin (task 9), and a freshly migrated database has no users, so no account can ever be created and no one can sign in. Roles alone are not enough to bootstrap.
+
+Extend the seeder: after the roles, create one Admin **from configuration**, and only when no user with that email already exists.
+
+```
+Identity:BootstrapAdmin:Email
+Identity:BootstrapAdmin:Password
+```
+
+Rules, all of them load-bearing:
+
+- **Absent configuration is not an error.** When either key is missing, seed the roles and return. A deployment that manages accounts another way must not be forced to carry a bootstrap account.
+- **Present-but-weak is an error.** If the keys are set and Identity rejects the password, throw naming the failures. Silently skipping would leave an operator believing an account exists.
+- **Idempotent by existence check**, matching the roles: `FindByEmailAsync` first, create only when absent. Re-running startup neither duplicates nor throws, and it never resets the password of an existing account.
+- **No default password, anywhere.** No fallback value, no `appsettings.json` placeholder, no literal in code. Constitution §VI. Locally these go in user secrets:
+
+  ```bash
+  dotnet user-secrets set "Identity:BootstrapAdmin:Email" "admin@example.com" --project src/CrmTicketing.Api
+  dotnet user-secrets set "Identity:BootstrapAdmin:Password" "<a real password>" --project src/CrmTicketing.Api
+  ```
+
+- The account is created in `RoleNames.Admin` and is an ordinary user afterwards — nothing in the code treats it specially, and an Admin can create further accounts through `POST /api/auth/users` as task 9 specifies.
+
+**Why configuration rather than a first-run open endpoint.** The common alternative — allow anonymous account creation while the users table is empty — hands Admin to whoever reaches the API first, which is a race an attacker can win on a public deployment. Configuration keeps account creation in the operator's hands and leaves no open route.
+
+**Why not defer this to issue #4 (seed data).** #4 is demo data. This is the difference between a working authentication system and one nobody can log into.
 
 ### 3 — Authentication and the signing key
 
@@ -162,7 +220,7 @@ public static class AuthenticationSetup
 - `TokenValidationParameters` validates issuer, audience, lifetime, and signing key. `ClockSkew = TimeSpan.FromSeconds(30)` — the five-minute default makes an expiry test either slow or a lie.
 - **Set `RoleClaimType` and `NameClaimType` explicitly**, and emit the token's claims using the same types. Role claims in a JWT do not map to `ClaimsIdentity.RoleClaimType` by default, so every `[Authorize(Roles = ...)]` and the `StaffOnly` policy from task 8 will reject a user who genuinely holds the role. The symptom is a 403 for correct credentials and it reads as a policy bug rather than a claim-mapping one. Whichever type the sign-in endpoint writes in task 9, this must match it — pick one and pin it in both places.
 
-**File: `src/CrmTicketing.Api/Program.cs`** — two changes and nothing else:
+**File: `src/CrmTicketing.Api/Program.cs`** — three changes and nothing else. **This supersedes any earlier statement in this plan that `Program.cs` takes only two:** the seeder from task 2 has no other call site, and without the third line the acceptance criterion "three roles are seeded idempotently at startup" is unreachable.
 
 ```csharp
 builder.Services.AddJwtAuthentication(builder.Configuration);   // after line 13
@@ -172,6 +230,13 @@ builder.Services.AddJwtAuthentication(builder.Configuration);   // after line 13
 app.UseAuthentication();                                        // immediately before line 30
 app.UseAuthorization();
 ```
+
+```csharp
+await app.Services.SeedIdentityRolesAsync(CancellationToken.None);   // after var app = builder.Build()
+```
+
+Placed after `Build()` and before `app.Run()`. `Program.cs` names one Infrastructure
+extension and no Identity type, matching how it already calls `AddPersistence`.
 
 **`UseAuthentication()` is genuinely absent today** — line 30 calls `UseAuthorization()` with nothing populating `HttpContext.User`. Without this line every `[Authorize]` added in task 8 rejects every caller including valid ones, and the failure looks like a token bug rather than a pipeline bug.
 
@@ -316,7 +381,21 @@ internal static class CallerContext
 | `Assign` | 213 | `[Authorize(Policy = StaffOnly)]` — a Customer may never assign |
 | `GetMetadata` | 251 | any authenticated role |
 
-**A Customer's allowed transitions.** A requester may move their own ticket to `Closed` (withdrawing it) and may reopen a `Resolved` ticket to `Open` (rejecting a resolution). Every other move is staff-only and returns **403**, not 409 — the move is legal in the workflow, the caller is not permitted to make it. **This is an authorisation rule at the API boundary and must not be written into `TicketStatusTransitions`**, which stays the single declaration of which moves are legal for anyone.
+**A Customer's allowed transitions — declared as `(from, to)` pairs, not as a set of target statuses.** The rule is source-aware and the distinction is load-bearing:
+
+| From | To | Meaning |
+|---|---|---|
+| `New` | `Closed` | Withdrawing a ticket before anyone works it |
+| `Open` | `Closed` | Withdrawing a ticket being worked |
+| `Pending` | `Closed` | Withdrawing while awaiting their own reply |
+| `Resolved` | `Closed` | Accepting the resolution |
+| `Resolved` | `Open` | Rejecting the resolution and reopening |
+
+**Exactly five pairs.** Every other move — including `New → Open` — is staff-only and returns **403**, not 409: the move is legal in the workflow, the caller is not permitted to make it.
+
+**Do not implement this as a set of allowed target statuses.** `{Closed, Open}` ignoring the source permits `New → Open`, which lets a requester mark their own untriaged ticket as being worked. `Open` means an agent has picked it up; a customer setting it asserts staff activity that is not happening, and any later SLA or reporting keyed off the move into `Open` inherits that false signal. The only legitimate route to `Open` for a requester is rejecting a resolution.
+
+**This is an authorisation rule at the API boundary and must not be written into `TicketStatusTransitions`**, which stays the single declaration of which moves are legal for anyone.
 
 `Create` forcing the requester id is not decoration: without it a Customer can raise a ticket in someone else's name and then be unable to see it.
 
@@ -371,6 +450,9 @@ This is the one hand-edit to a generated migration this project permits, and it 
 ## Edge Cases & Failure Modes
 
 - **`UseAuthentication()` omitted.** `Program.cs:30` calls `UseAuthorization()` today with nothing populating `HttpContext.User`. Add authorisation without authentication and every request is anonymous, so every `[Authorize]` returns 401 including valid tokens. The symptom looks like a token-signing bug; the cause is one missing line.
+- **Seeding runs before the tables exist.** `SeedIdentityRolesAsync` queries the roles table, which task 10's migration creates. On a database where migrations have not been applied, `RoleExistsAsync` throws a Npgsql "relation does not exist" error and the API fails to start with a message that does not name the cause. Catch that case and rethrow an `InvalidOperationException` naming the required command — `dotnet ef database update --project src/CrmTicketing.Infrastructure --startup-project src/CrmTicketing.Api` — exactly as `AddPersistence` does for a missing connection string. **This is a startup-behaviour change:** the API currently starts fine without migrations and fails only on the first query. Failing at startup with an actionable message is the better trade, but it must be recorded in `README.md`, whose setup section already applies migrations before running the API.
+- **No test boots the host,** so the seeding call cannot affect the suite. All three test projects instantiate controllers directly; nothing references `Microsoft.AspNetCore.Mvc.Testing`, `WebApplicationFactory`, or `TestServer`. Verified at planning time. If a future story adds an integration-test host, the seeding call becomes its problem to configure.
+- **`OnModelCreating`'s parameter must be renamed to `builder`.** `IdentityDbContext` declares it as `builder`, and CA1725 (parameter names must match the base declaration) is an error under `TreatWarningsAsErrors`. Rename it; the call ordering inside the method does not change. This is required by the analyser, not a deviation.
 - **Snake_case renames the Identity tables.** `ApplySnakeCaseNames` runs over every entity, so `AspNetUsers` becomes `asp_net_users`. Correct and intended, but a reader expecting framework defaults will think the migration is wrong.
 - **Existing rows break the migration.** Covered in task 10. Without the `DELETE`, `dotnet ef database update` fails on the not-null columns and, if those were made nullable, again on the foreign key.
 - **A staff member creating a ticket for a customer who is not a user.** The new `requester_id` foreign key rejects a `Guid` with no matching user, and `DbUpdateException` is unmapped, so the caller gets 500 instead of 400. Validate existence in `Create` (task 5's note). This is a *new* failure mode: the same request succeeded before this story.
@@ -424,7 +506,7 @@ This is the one hand-edit to a generated migration this project permits, and it 
 9. An anonymous request returns 401 — asserted at the attribute level: every action on `TicketsController` is covered by `[Authorize]`, by reflection over the type.
 10. A Customer's `Create` records their own id as `RequesterId` even when the body names another.
 11. A Customer calling `Assign` is refused by the `StaffOnly` policy.
-12. A Customer transitioning to a staff-only status gets 403, and to `Closed` gets 200.
+12. A Customer transitioning to a staff-only status gets 403, and to `Closed` gets 200. **A `[Theory]` over all ten legal workflow moves**, asserting exactly the five pairs in task 8's table are permitted for a Customer and the other five return 403. `New → Open` must be among the refusals — a target-only implementation passes every other case and fails only this one.
 13. `CallerContext.Access` maps Admin and Agent to `All()`, Customer to `OwnedBy`.
 
 **Create file: `tests/CrmTicketing.Api.Tests/Controllers/AuthControllerTests.cs`**
@@ -457,20 +539,62 @@ Half-applied risk: if `Up()` fails partway — most likely on the foreign key �
 1. **Backend builds:** `dotnet build CrmTicketing.slnx` — zero warnings, zero errors.
 2. **Tests pass:** `dotnet test CrmTicketing.slnx` — all **four** test projects (`Domain.Tests`, `Api.Tests`, `Infrastructure.Tests`, `Client.Tests`), no database running. This story adds test *files*, not a test project.
 3. **Domain stays pure:** `grep -cE "(Project|Package)Reference" src/CrmTicketing.Domain/CrmTicketing.Domain.csproj` returns `0`.
-4. **No Identity in the domain:** `grep -rn "Identity" src/CrmTicketing.Domain/` returns no output.
-5. **No Identity type leaks upward:** `grep -rn "ApplicationUser\|IdentityUser" src/CrmTicketing.Shared/ src/CrmTicketing.Client/` returns no output.
-6. **Every ticket action is authorised:** test 9's reflection check is the real proof — a `grep` count passes on a single class-level attribute even if an action carries `[AllowAnonymous]`. Assert the negative instead: `grep -rn "AllowAnonymous" src/CrmTicketing.Api/Controllers/ --exclude-dir=bin --exclude-dir=obj` returns hits **only** in `AuthController.cs`, and only on the sign-in action.
-7. **No signing key in the repository:** `git grep -iE "signingkey|jwt.*secret" -- ':!*.md' ':!.github/workflows/ci.yml'` returns no literal key. The CI file is excluded because task 4 puts a deliberately public throwaway value there.
-8. **No ambient clock:** `grep -rn "DateTime.UtcNow\|DateTime.Now" src/` returns no output.
-9. **The transition table is unchanged:** `git diff main -- src/CrmTicketing.Domain/Tickets/TicketStatusTransitions.cs` returns no output.
-10. **Optional, with PostgreSQL running:** `dotnet ef database update`, create an Admin through `POST /api/auth/users`, sign in, and confirm a Customer's `GET /api/tickets` returns only their own rows while an Agent's returns all.
+4. **No Identity in the domain:** grep for Identity *types*, not the word, and exclude build output:
+
+   ```bash
+   grep -rnE "Microsoft\.AspNetCore\.Identity|IdentityUser|IdentityRole|IdentityDbContext|RoleManager|UserManager|ApplicationUser|ApplicationRole" \
+     --include='*.cs' --exclude-dir=bin --exclude-dir=obj src/CrmTicketing.Domain/
+   ```
+
+   Returns no output. **The bare word does not work:** `obj/project.assets.json` carries the restore graph, and `Entity.cs` uses "identity" in a doc comment about entity identity, which predates this story and is not a violation.
+5. **No Identity type leaks upward:**
+
+   ```bash
+   grep -rnE "ApplicationUser|ApplicationRole|IdentityUser|IdentityRole|RoleManager|UserManager" \
+     --include='*.cs' --include='*.razor' --exclude-dir=bin --exclude-dir=obj \
+     src/CrmTicketing.Shared/ src/CrmTicketing.Client/
+   ```
+
+   Returns no output.
+6. **The composition root names no Identity type:**
+
+   ```bash
+   grep -rnE "ApplicationUser|ApplicationRole|RoleManager|UserManager|IdentitySeeder" \
+     --include='*.cs' --exclude-dir=bin --exclude-dir=obj src/CrmTicketing.Api/
+   ```
+
+   Returns no output. `Program.cs` calls two Infrastructure extensions — `AddPersistence` and `SeedIdentityRolesAsync` — and knows nothing else about Identity. Task 9's `AuthController` is the one place `UserManager` legitimately appears; when it lands, narrow this grep to exclude that file rather than deleting the step.
+
+7. **Every ticket action is authorised:** test 9's reflection check is the real proof — a `grep` count passes on a single class-level attribute even if an action carries `[AllowAnonymous]`. Assert the negative instead: `grep -rn "AllowAnonymous" src/CrmTicketing.Api/Controllers/ --exclude-dir=bin --exclude-dir=obj` returns hits **only** in `AuthController.cs`, and only on the sign-in action.
+8. **No signing key in production source:**
+
+    ```bash
+    git grep -iE "signingkey|jwt.*secret" -- 'src/**' ':!*.md'
+    ```
+
+    Returns only configuration *keys* and binding code — never a literal value.
+
+    Then confirm every literal elsewhere is self-identifying as disposable:
+
+    ```bash
+    git grep -iE "signingkey" -- 'tests/**' '.github/**'
+    ```
+
+    Every hit must carry a `test-only-` or `ci-only-` prefix in its value. Two such literals exist by design: task 4's CI environment value, and the fixture `AuthControllerTests` uses to sign a token in-process. Both are deliberately public and meaningless. **Excluding tests wholesale would be weaker** — it would let a real secret pasted into a test pass unnoticed; requiring the prefix keeps the check meaningful while admitting the legitimate fixtures.
+9. **No ambient clock:** `grep -rnE "DateTime\\.UtcNow|DateTime\\.Now" --include='*.cs' --exclude-dir=bin --exclude-dir=obj src/` returns no output.
+10. **The transition table is unchanged:** `git diff main -- src/CrmTicketing.Domain/Tickets/TicketStatusTransitions.cs` returns no output.
+11. **Optional, with PostgreSQL running:** `dotnet ef database update`, set the two `Identity:BootstrapAdmin` secrets, and start the API — the Admin is seeded at startup. Sign in as that Admin, create an Agent and a Customer through `POST /api/auth/users`, then confirm a Customer's `GET /api/tickets` returns only their own rows while the Agent's returns all, and that the Customer's `GET /api/tickets/{id}` for the Agent's ticket returns **404**.
+
+    **Do not attempt to create the first Admin through `POST /api/auth/users`.** It requires an Admin, and a freshly migrated database has none — that route is a closed loop, which is why task 2b exists.
 
 ---
 
 ## Done Criteria
 
 - [ ] Identity is configured over `CrmDbContext` with `Guid` keys; Identity types exist only in `CrmTicketing.Infrastructure`.
-- [ ] `Admin`, `Agent`, and `Customer` are seeded idempotently at startup.
+- [ ] A bootstrap Admin is seeded from `Identity:BootstrapAdmin` configuration when set, skipped when absent, and never duplicated on a second startup. No password literal exists in the repository.
+- [ ] `Admin`, `Agent`, and `Customer` are seeded idempotently at startup, invoked by `await app.Services.SeedIdentityRolesAsync(...)` in `Program.cs`. Running startup twice does not duplicate them.
+- [ ] `IdentitySeeder` is `internal`; `grep -rn "IdentitySeeder\|RoleManager\|ApplicationRole" src/CrmTicketing.Api/` returns no output.
 - [ ] Sign-in issues a bearer token; a bad password and an unknown email return identical 401s.
 - [ ] No self-registration; `POST /api/auth/register` returns 404 and a test asserts it.
 - [ ] Every `TicketsController` action requires an authenticated caller; anonymous requests get 401.

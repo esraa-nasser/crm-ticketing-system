@@ -33,6 +33,11 @@ jobs:
         run: dotnet build CrmTicketing.slnx --configuration Release --no-restore
 
       - name: Test
+        # Deliberately public and meaningless: it exists so tests that construct the
+        # API's configuration do not hit the fail-closed signing-key guard. Not a
+        # secret, and never reused anywhere else.
+        env:
+          Jwt__SigningKey: ci-only-throwaway-signing-key-not-a-secret-0123456789
         run: >-
           dotnet test CrmTicketing.slnx
           --configuration Release

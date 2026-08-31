@@ -1,0 +1,86 @@
+@page "/signin"
+@inject AuthApiClient AuthApi
+@inject TokenStore Tokens
+@inject NavigationManager Navigation
+
+<PageTitle>Sign in</PageTitle>
+
+<h1>Sign in</h1>
+
+@if (Tokens.IsSignedIn)
+{
+    <div class="alert alert-success" role="alert">
+        <p class="mb-1">Signed in as <strong>@Tokens.Email</strong>.</p>
+        <p class="mb-2 small">Roles: @string.Join(", ", Tokens.Roles)</p>
+        <a class="btn btn-sm btn-outline-secondary" href="tickets">Go to tickets</a>
+        <button type="button" class="btn btn-sm btn-outline-danger" @onclick="SignOut">Sign out</button>
+    </div>
+}
+else
+{
+    @if (_error is not null)
+    {
+        <div class="alert alert-danger" role="alert">@_error</div>
+    }
+
+    <EditForm Model="_model" OnValidSubmit="Submit" FormName="signin">
+        <div class="mb-3">
+            <label class="form-label" for="email">Email</label>
+            <InputText id="email" class="form-control" @bind-Value="_model.Email" autocomplete="username" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label" for="password">Password</label>
+            <InputText id="password" type="password" class="form-control"
+                       @bind-Value="_model.Password" autocomplete="current-password" />
+        </div>
+        <button type="submit" class="btn btn-primary" disabled="@_busy">
+            @(_busy ? "Signing in…" : "Sign in")
+        </button>
+    </EditForm>
+}
+
+@code {
+    private sealed class SignInModel
+    {
+        public string Email { get; set; } = string.Empty;
+
+        public string Password { get; set; } = string.Empty;
+    }
+
+    private readonly SignInModel _model = new();
+    private string? _error;
+    private bool _busy;
+
+    [SupplyParameterFromQuery] public string? ReturnUrl { get; set; }
+
+    private async Task Submit()
+    {
+        _busy = true;
+        _error = null;
+
+        try
+        {
+            var response = await AuthApi.SignInAsync(
+                new SignInRequest(_model.Email, _model.Password),
+                CancellationToken.None);
+
+            Tokens.Set(response.AccessToken, response.Email, response.Roles);
+            Navigation.NavigateTo(string.IsNullOrEmpty(ReturnUrl) ? "tickets" : ReturnUrl);
+        }
+        catch (Exception ex) when (ex is ApiRequestException or HttpRequestException or TaskCanceledException)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void SignOut()
+    {
+        Tokens.Clear();
+        _model.Email = string.Empty;
+        _model.Password = string.Empty;
+    }
+}

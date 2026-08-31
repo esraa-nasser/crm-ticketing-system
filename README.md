@@ -4,13 +4,13 @@ A CRM ticketing platform built with **Blazor WebAssembly** and **ASP.NET Core** 
 .NET 10, backed by PostgreSQL and developed with **spec-driven development** using
 [SquadKit](https://github.com/AzmSquad/squad-kit).
 
-> **Status: working vertical slice.** The ticket aggregate, its status workflow, its
-> persistence mapping, the full HTTP surface, and the ticket list UI are implemented,
-> tested, and merged. Every endpoint has been exercised live against a real database.
-> Authentication is **not** implemented — see [What is not built yet](#what-is-not-built-yet),
-> which explains why and what comes next.
+> **Status: working vertical slice, with authentication.** The ticket aggregate, its
+> status workflow, its persistence mapping, the full HTTP surface, the ticket list UI,
+> and identity with role-based authorisation are implemented, tested, and merged.
+> Every endpoint has been exercised live against a real database. See
+> [What is not built yet](#what-is-not-built-yet) for what remains and why.
 
-**171 tests** across four projects, all passing with no API and no database running.
+**242 tests** across four projects, all passing with no API and no database running.
 Every merge to `main` went through a pull request gated on build, test, and an
 SDD-compliance check.
 
@@ -18,7 +18,7 @@ SDD-compliance check.
 
 ## What works today
 
-**In the browser** — browse to `/tickets`:
+**In the browser** — sign in at `/signin`, then browse to `/tickets`:
 
 - Every ticket from the database, in a paged table
 - Filter by status and priority, using options served by the API rather than hardcoded
@@ -28,7 +28,7 @@ SDD-compliance check.
   (the API is unreachable or rejected the request), with the API's validation message
   surfaced rather than a generic one
 
-**Over HTTP** — the full write surface exists and is verified, though no UI drives it yet:
+**Over HTTP** — the full write surface exists and is verified. Only sign-in and the ticket list are driven by the UI so far; the rest is reachable by API:
 
 | Method | Route | Behaviour |
 |---|---|---|
@@ -39,13 +39,33 @@ SDD-compliance check.
 | `POST` | `/api/tickets/{id}/status` | 200, 404, or **409** on an illegal transition |
 | `POST` | `/api/tickets/{id}/assignee` | 200, 404, 400, or 409 |
 | `GET` | `/api/tickets/metadata` | 200 — statuses, priorities, and the legal transition map |
+| `POST` | `/api/auth/signin` | 200 with a bearer token, or 401 |
+| `POST` | `/api/auth/users` | 201; Admin only — the sole route that creates an account |
 | `GET` | `/api/system/info` | Build, environment, server clock |
 | `GET` | `/health` | Liveness probe |
 | `GET` | `/openapi/v1.json` | OpenAPI document (Development only) |
 
-Every failure returns [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) problem
-details. An illegal status transition returns **409 Conflict** carrying the attempted
-`from` and `to` values — not 400, and not 500.
+Every ticket endpoint requires an authenticated caller. Every failure returns
+[RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) problem details. An illegal status
+transition returns **409 Conflict** carrying the attempted `from` and `to` values — not
+400, and not 500.
+
+### Roles
+
+| Role | May |
+|---|---|
+| `Admin` | Everything, including creating accounts |
+| `Agent` | Read every ticket; create, update, transition, and assign |
+| `Customer` | Create; read and act on **only** the tickets they raised; never assign |
+
+A Customer sees only their own tickets, and that constraint lives in
+`TicketRepository` rather than in a controller or a screen — so no future caller can
+forget it. Requesting someone else's ticket returns **404**, not 403: a 403 would
+confirm the ticket exists.
+
+A requester may withdraw their own ticket to `Closed` from any live status, and may
+reopen a `Resolved` one to `Open`. Every other move is staff-only and returns **403** —
+the move is legal in the workflow, the caller is simply not permitted to make it.
 
 ### The domain rules
 
@@ -82,7 +102,7 @@ cd crm-ticketing-system
 
 dotnet restore CrmTicketing.slnx
 dotnet build   CrmTicketing.slnx
-dotnet test    CrmTicketing.slnx     # 171 tests, no database required
+dotnet test    CrmTicketing.slnx     # 242 tests, no database required
 ```
 
 ### Point it at a database
@@ -123,7 +143,27 @@ it with a placeholder.
 > `export ConnectionStrings__CrmDatabase="..."` works for a single shell without
 > changing anything stored. Note the double underscore.
 
-Apply the migrations:
+### Create the first account
+
+`POST /api/auth/users` requires an Admin, and a fresh database has none — so the first
+Admin is seeded from configuration at startup. Set both keys, or nobody can sign in:
+
+```bash
+dotnet user-secrets set "Identity:BootstrapAdmin:Email" "admin@example.com" --project src/CrmTicketing.Api
+dotnet user-secrets set "Identity:BootstrapAdmin:Password" "<a real password>" --project src/CrmTicketing.Api
+```
+
+The account is created once, on the first startup after migration, and never touched
+again — re-running startup neither duplicates it nor resets its password. Leaving these
+keys unset is allowed and simply skips it. A JWT signing key is also required:
+
+```bash
+dotnet user-secrets set "Jwt:SigningKey" "<at least 32 characters>" --project src/CrmTicketing.Api
+```
+
+The API refuses to start without it rather than falling back to a default.
+
+### Apply the migrations
 
 ```bash
 dotnet tool install --global dotnet-ef      # once per machine
@@ -132,8 +172,13 @@ dotnet ef database update \
   --startup-project src/CrmTicketing.Api
 ```
 
-That creates the `ticket` table. Column and table names are snake_case, applied by a
-convention in `SnakeCaseNaming` rather than by attributes on every property.
+That creates the `ticket` table and the Identity tables. Column and table names are
+snake_case, applied by a convention in `SnakeCaseNaming` rather than by attributes on
+every property — which is why Identity's tables read `asp_net_users` rather than
+`AspNetUsers`.
+
+**Run this before starting the API.** Role seeding queries the roles table at startup,
+so an unmigrated database fails fast with a message naming this command.
 
 ### Run it
 
@@ -152,20 +197,27 @@ dotnet run --project src/CrmTicketing.Client
 
 Then open **<http://localhost:5098/tickets>**.
 
-The database starts empty, so create a ticket first:
+Sign in with the bootstrap Admin. The database starts empty, so create a ticket — note
+that every call now needs a token:
 
 ```bash
-curl -sk -X POST -H "Content-Type: application/json" --data-binary @- \
-  https://localhost:7043/api/tickets <<< '{
+TOKEN=$(curl -sk -X POST -H "Content-Type: application/json" --data-binary @- \
+  https://localhost:7043/api/auth/signin \
+  <<< '{"email":"admin@example.com","password":"<your-password>"}' \
+  | grep -o '"accessToken":"[^"]*"' | cut -d'"' -f4)
+
+curl -sk -X POST -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+  --data-binary @- https://localhost:7043/api/tickets <<< '{
     "title": "Printer offline in Meeting Room 3",
     "description": "Reported by reception, started this morning.",
-    "requesterId": "11111111-1111-1111-1111-111111111111",
+    "requesterId": "<the admin user id from the sign-in response>",
     "priority": "High",
     "category": "Hardware"
   }'
 ```
 
-Refresh `/tickets` and it appears.
+`requesterId` must be a real user id — a foreign key enforces it, and an unknown id
+returns 400 rather than failing at the database. Refresh `/tickets` and it appears.
 
 > **If the page shows a connection error**, the browser is probably refusing the API's
 > self-signed development certificate. `curl -k` skips that check; a browser does not.
@@ -207,6 +259,7 @@ Stories, plans, and their execution order live under [`.squad/`](.squad/):
 | 03 | `Ticket` aggregate, status workflow, mapping, migration | #8, #9 |
 | 04 | Ticket endpoints and `Shared` contracts | #10 |
 | 05 | Ticket list view with filtering and paging | #12 |
+| 06 | Identity, roles, sign-in, and endpoint authorisation | #5, #6 |
 
 See [docs/sdd-workflow.md](docs/sdd-workflow.md) for how to run the loop.
 
@@ -218,9 +271,8 @@ Deliberately, and in this order:
 
 | Area | Issues | Why it is next, or why it waits |
 |---|---|---|
-| **Identity, roles, authorisation** | #5, #6 | **Next.** Every endpoint is currently open and every mutation is anonymous — `Ticket` records `CreatedAt` but no actor. That gap widens with every ticket created and cannot be backfilled honestly, which is why this was moved ahead of the remaining UI. An intake is written at `.squad/stories/auth-roles/5/intake.md`. |
-| Ticket detail view, write actions | #13 | Needs an acting user, so it follows authorisation rather than preceding it. |
-| Permission-gated UI | #16 | Cosmetic until the endpoints refuse the call, which #5 handles. |
+| Ticket detail view, write actions | #13 | **Next.** Authorisation is in place, so an acting user now exists to attribute writes to. |
+| Permission-gated UI | #16 | The endpoints already refuse the call; this hides controls a role cannot use. |
 | Kanban board | #14 | Consumes the transition map already published at `/api/tickets/metadata`. |
 | Comments and activity timeline | #11 | Needs an owned-entity vs. separate-aggregate decision of its own. |
 | Seed data | #4 | — |
@@ -228,6 +280,8 @@ Deliberately, and in this order:
 | SLA policies | #21 | Needs business-hours arithmetic. |
 
 Known defect: `GET /health` reports `Healthy` when the database is unreachable (#31).
+It is deliberately anonymous — a liveness probe that needs a token is useless to a load
+balancer.
 
 ---
 

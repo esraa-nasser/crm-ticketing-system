@@ -16,8 +16,17 @@ var apiBaseAddress = builder.Configuration["Api:BaseAddress"]
 
 builder.Services.AddHttpClient<SystemApiClient>(client =>
     client.BaseAddress = new Uri(apiBaseAddress));
-builder.Services.AddHttpClient<ITicketsApiClient, TicketsApiClient>(client =>
+builder.Services.AddScoped<TokenStore>();
+builder.Services.AddScoped<BearerTokenHandler>();
+
+// Signing in is how the token is obtained, so AuthApiClient carries no handler.
+builder.Services.AddHttpClient<AuthApiClient>(client =>
     client.BaseAddress = new Uri(apiBaseAddress));
+
+builder.Services.AddHttpClient<ITicketsApiClient, TicketsApiClient>(client =>
+        client.BaseAddress = new Uri(apiBaseAddress))
+    .AddHttpMessageHandler<BearerTokenHandler>();
+
 builder.Services.AddScoped<TicketMetadataProvider>();
 
 await builder.Build().RunAsync();
