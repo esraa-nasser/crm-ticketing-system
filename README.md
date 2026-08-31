@@ -87,17 +87,41 @@ dotnet test    CrmTicketing.slnx     # 171 tests, no database required
 
 ### Point it at a database
 
-Create a database, then store the connection string with **user secrets** — never in
-a file inside the repository (`docs/constitution.md` §VI):
+The connection string is stored with **user secrets** — never in a file inside the
+repository (`docs/constitution.md` §VI).
+
+First create an empty database named `crm_ticketing`, however you normally would
+— pgAdmin is fine. From a shell, `createdb` does it, though on a standard Windows
+install it is not on `PATH`:
 
 ```bash
+# macOS / Linux, or Windows with PostgreSQL's bin directory on PATH
 createdb crm_ticketing
 
+# Windows, standard installer layout - adjust the version number
+"/c/Program Files/PostgreSQL/18/bin/createdb.exe" -U postgres -h localhost crm_ticketing
+```
+
+Then store the connection string. **Replace the password before running this** —
+pasting the line unchanged stores the literal text `<your-password>` and the API
+will fail to connect with an error that does not obviously point back here:
+
+```bash
 dotnet user-secrets init --project src/CrmTicketing.Api
 dotnet user-secrets set "ConnectionStrings:CrmDatabase" \
-  "Host=localhost;Port=5432;Database=crm_ticketing;Username=postgres;Password=YOUR_PASSWORD" \
+  "Host=localhost;Port=5432;Database=crm_ticketing;Username=postgres;Password=<your-password>" \
   --project src/CrmTicketing.Api
 ```
+
+`init` is safe to run more than once — it adds a `UserSecretsId` to the project
+only if one is missing. `set` **overwrites** any existing value for that key, so
+if you already have a working connection string, skip it rather than re-running
+it with a placeholder.
+
+> Prefer not to touch an existing secret? An environment variable outranks user
+> secrets in the configuration chain, so
+> `export ConnectionStrings__CrmDatabase="..."` works for a single shell without
+> changing anything stored. Note the double underscore.
 
 Apply the migrations:
 
