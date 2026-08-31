@@ -160,6 +160,7 @@ public static class AuthenticationSetup
 - Bind `JwtOptions` from the `Jwt` section.
 - **Fail closed**, exactly as `AddPersistence` does for its connection string (`DependencyInjection.cs` ~lines 28–36): throw `InvalidOperationException` naming the configuration key and the `dotnet user-secrets` command when `SigningKey` is empty or shorter than 32 characters. A short key produces a runtime failure inside the JWT library with a far worse message.
 - `TokenValidationParameters` validates issuer, audience, lifetime, and signing key. `ClockSkew = TimeSpan.FromSeconds(30)` — the five-minute default makes an expiry test either slow or a lie.
+- **Set `RoleClaimType` and `NameClaimType` explicitly**, and emit the token's claims using the same types. Role claims in a JWT do not map to `ClaimsIdentity.RoleClaimType` by default, so every `[Authorize(Roles = ...)]` and the `StaffOnly` policy from task 8 will reject a user who genuinely holds the role. The symptom is a 403 for correct credentials and it reads as a policy bug rather than a claim-mapping one. Whichever type the sign-in endpoint writes in task 9, this must match it — pick one and pin it in both places.
 
 **File: `src/CrmTicketing.Api/Program.cs`** — two changes and nothing else:
 
@@ -202,9 +203,11 @@ This is the one story so far that edits `ci.yml`; story 05's plan asserted the f
 Add two properties beside the existing timestamps:
 
 ```csharp
-public Guid CreatedBy { get; }
+public Guid CreatedBy { get; private set; }
 public Guid UpdatedBy { get; private set; }
 ```
+
+**`private set`, not a get-only property.** A get-only auto-property can be assigned only inside a constructor, but `Open` is a static factory that constructs through the private constructor at ~line 43 — so a get-only `CreatedBy` either forces that constructor's signature to change or does not compile at all. A private setter assigned once inside `Open` keeps the constructor untouched and keeps the property closed to callers, which is what the invariant actually requires. Test 4 pins that it never changes afterwards.
 
 Every mutator takes `Guid actorId` alongside the `DateTimeOffset at` it already takes, rejects `Guid.Empty` with `ArgumentException` naming the parameter, and assigns `UpdatedBy` wherever it assigns `UpdatedAt`:
 
@@ -217,7 +220,7 @@ public void ChangePriority(TicketPriority priority, DateTimeOffset at, Guid acto
 public void UpdateDetails(TicketTitle title, string description, string? category, DateTimeOffset at, Guid actorId);
 ```
 
-`Open` sets `CreatedBy` and `UpdatedBy` to the same actor. The EF constructor (~line 43) needs no change: both are value types EF sets by convention.
+`Open` sets `CreatedBy` and `UpdatedBy` to the same actor, through the private setters. The EF constructor (~line 43) needs no change: both are value types EF materialises through their setters by convention.
 
 **The domain still reads no clock, no `HttpContext`, and no Identity type.** The actor is a bare `Guid` handed in by the caller, exactly as the instant is.
 
@@ -232,6 +235,12 @@ builder.HasIndex(t => t.RequesterId);   // already present
 ```
 
 The `requester_id` foreign key to the user table is declared here **without a navigation property on `Ticket`**, using `HasOne<ApplicationUser>().WithMany().HasForeignKey(t => t.RequesterId)`. `Ticket` never learns that `ApplicationUser` exists.
+
+**The foreign key changes how `POST /api/tickets` fails, and task 8 must handle it.** Until now `RequesterId` was an opaque `Guid` referencing nothing, so any value inserted successfully. With the key in place, a `requesterId` that is not a real user id makes PostgreSQL reject the insert; EF surfaces that as `DbUpdateException`, which the exception handler does not map, so the caller gets **500**. A Customer is unaffected because task 8 forces their own id — but **an Admin or Agent raising a ticket on behalf of a customer still takes `requesterId` from the request body**, which is exactly the path that now breaks.
+
+Resolution: `Create` verifies the requester exists before constructing the aggregate and returns **400** naming `requesterId` when it does not. That check belongs at the API boundary, not in the domain, because existence of a user is not a `Ticket` invariant — `Ticket` still knows nothing about users. Add an `ExistsAsync(Guid userId, CancellationToken)` method to a small `IUserDirectory` declared in `CrmTicketing.Domain/Tickets/` and implemented over `UserManager` in Infrastructure, so the controller does not name an Identity type.
+
+**No foreign key on `assignee_id` in this story.** Adding one would make `POST /api/tickets/{id}/assignee` fail the same way, and assignment is staff-only with its own validation story. Declaring one key and not the other is a deliberate asymmetry, not an oversight — record it in `docs/architecture.md` so the next reader does not "fix" it.
 
 ### 6 — Row-level filtering in the repository
 
@@ -364,6 +373,8 @@ This is the one hand-edit to a generated migration this project permits, and it 
 - **`UseAuthentication()` omitted.** `Program.cs:30` calls `UseAuthorization()` today with nothing populating `HttpContext.User`. Add authorisation without authentication and every request is anonymous, so every `[Authorize]` returns 401 including valid tokens. The symptom looks like a token-signing bug; the cause is one missing line.
 - **Snake_case renames the Identity tables.** `ApplySnakeCaseNames` runs over every entity, so `AspNetUsers` becomes `asp_net_users`. Correct and intended, but a reader expecting framework defaults will think the migration is wrong.
 - **Existing rows break the migration.** Covered in task 10. Without the `DELETE`, `dotnet ef database update` fails on the not-null columns and, if those were made nullable, again on the foreign key.
+- **A staff member creating a ticket for a customer who is not a user.** The new `requester_id` foreign key rejects a `Guid` with no matching user, and `DbUpdateException` is unmapped, so the caller gets 500 instead of 400. Validate existence in `Create` (task 5's note). This is a *new* failure mode: the same request succeeded before this story.
+- **Role claims that do not map.** `[Authorize(Roles = ...)]` reads `ClaimsIdentity.RoleClaimType`, which a JWT's role claims do not populate by default. Correct credentials get 403 and it looks like a broken policy. Task 3 pins `RoleClaimType`; the sign-in endpoint in task 9 must emit the matching claim type.
 - **A Customer creating a ticket for someone else.** `Create` must force `requesterId` from the principal. Taking it from the request body lets a Customer raise a ticket they immediately cannot see, which reads as data loss.
 - **403 where 404 is required.** A Customer fetching another customer's ticket must get 404. The repository returning null is what makes this automatic; any controller-level ownership check would produce 403 and leak existence.
 - **Filtering the page but not the count.** `TicketRepository.Filter` is shared by `ListAsync` and `CountAsync` precisely so this cannot happen. A Customer seeing `totalCount: 40` above three rows discloses how many tickets exist.
@@ -393,7 +404,7 @@ This is the one hand-edit to a generated migration this project permits, and it 
 **Create file: `tests/CrmTicketing.Domain.Tests/Tickets/TicketAccessTests.cs`**
 
 5. `All()` has a null `RestrictedToRequesterId`; `OwnedBy(id)` carries that id.
-6. `TicketQuery.Create` requires an access argument — a compile-time guarantee, asserted by a test that constructs one explicitly and reads `Access` back.
+6. `TicketQuery.Create` round-trips the access argument: construct one with `OwnedBy(id)` and read `Access` back. **This does not prove the parameter is required** — the same test passes if someone later gives it a default. That guarantee is compile-time only and is not runtime-assertable; the protection against a default being added is the note in Edge Cases plus review, not this test. Do not describe it as proof.
 
 ### 12 — Repository tests
 
@@ -402,7 +413,9 @@ This is the one hand-edit to a generated migration this project permits, and it 
 7. **The acceptance criterion's own test:** call the repository directly with `TicketAccess.OwnedBy(customerId)` and assert another user's ticket is absent from `ListAsync`, absent from `CountAsync`, and null from `GetAsync`.
 8. `TicketAccess.All()` returns both.
 
-**These need a database and CI has none.** Assert them against the query expression rather than executed SQL — `Filter` is a pure `IQueryable` transformation and can be exercised over an in-memory `IQueryable<Ticket>` without a provider. **Do not add the EF in-memory provider**; issue #29 covers real integration tests.
+**These need a database and CI has none, so they must not go through `TicketRepository`'s constructor** — it requires a `CrmDbContext`. Change `Filter` from `private` to `internal static`, taking `IQueryable<Ticket>` and `TicketQuery` and returning `IQueryable<Ticket>`, and call it directly over an in-memory `IQueryable<Ticket>`. `CrmTicketing.Infrastructure.csproj` already carries an `InternalsVisibleTo` for its test project, so no new grant is needed — but the accessibility change is required and test 7's wording above ("call the repository directly") is wrong: the tests call `Filter`, not the repository.
+
+`ListAsync`, `CountAsync`, and `GetAsync` must all route through that one helper, so a rule cannot apply to the page but not the count — which is why `Filter` already exists. **Do not add the EF in-memory provider**; issue #29 covers real integration tests.
 
 ### 13 — API tests
 
@@ -442,11 +455,11 @@ Half-applied risk: if `Up()` fails partway — most likely on the foreign key �
 ## Verification Steps
 
 1. **Backend builds:** `dotnet build CrmTicketing.slnx` — zero warnings, zero errors.
-2. **Tests pass:** `dotnet test CrmTicketing.slnx` — all five test projects, no database running.
+2. **Tests pass:** `dotnet test CrmTicketing.slnx` — all **four** test projects (`Domain.Tests`, `Api.Tests`, `Infrastructure.Tests`, `Client.Tests`), no database running. This story adds test *files*, not a test project.
 3. **Domain stays pure:** `grep -cE "(Project|Package)Reference" src/CrmTicketing.Domain/CrmTicketing.Domain.csproj` returns `0`.
 4. **No Identity in the domain:** `grep -rn "Identity" src/CrmTicketing.Domain/` returns no output.
 5. **No Identity type leaks upward:** `grep -rn "ApplicationUser\|IdentityUser" src/CrmTicketing.Shared/ src/CrmTicketing.Client/` returns no output.
-6. **Every ticket action is authorised:** `grep -c "\[Authorize" src/CrmTicketing.Api/Controllers/TicketsController.cs` returns at least `1`, and test 9 proves the coverage by reflection.
+6. **Every ticket action is authorised:** test 9's reflection check is the real proof — a `grep` count passes on a single class-level attribute even if an action carries `[AllowAnonymous]`. Assert the negative instead: `grep -rn "AllowAnonymous" src/CrmTicketing.Api/Controllers/ --exclude-dir=bin --exclude-dir=obj` returns hits **only** in `AuthController.cs`, and only on the sign-in action.
 7. **No signing key in the repository:** `git grep -iE "signingkey|jwt.*secret" -- ':!*.md' ':!.github/workflows/ci.yml'` returns no literal key. The CI file is excluded because task 4 puts a deliberately public throwaway value there.
 8. **No ambient clock:** `grep -rn "DateTime.UtcNow\|DateTime.Now" src/` returns no output.
 9. **The transition table is unchanged:** `git diff main -- src/CrmTicketing.Domain/Tickets/TicketStatusTransitions.cs` returns no output.
@@ -465,6 +478,8 @@ Half-applied risk: if `Up()` fails partway — most likely on the foreign key �
 - [ ] Row-level filtering lives in `TicketRepository`; a Customer's `GET /api/tickets/{id}` for another's ticket returns **404**, not 403.
 - [ ] `Ticket` exposes `CreatedBy` and `UpdatedBy`, non-empty, set from the principal at the API boundary; the domain reads no clock, no `HttpContext`, and no Identity type.
 - [ ] The migration adds the Identity tables, both columns, and the `requester_id` foreign key, and **explicitly deletes the two pre-existing rows**.
+- [ ] `POST /api/tickets` with a `requesterId` that is not a real user returns **400** naming the parameter, not 500 — verified against a running database, since the foreign key is what produces the failure.
+- [ ] `RoleClaimType` is set explicitly and matches the claim type the sign-in endpoint emits; a staff token satisfies `StaffOnly`.
 - [ ] The signing key is absent from the repository; CI supplies a throwaway value.
 - [ ] The Blazor client signs in and carries the token; `/tickets` still works end to end.
 - [ ] `TicketStatusTransitions` is byte-identical to `main`.
