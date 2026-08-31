@@ -1,0 +1,68 @@
+using CrmTicketing.Client.Services;
+using CrmTicketing.Shared.Contracts.Tickets;
+
+namespace CrmTicketing.Client.Tests.Services;
+
+public sealed class TicketMetadataProviderTests
+{
+    private sealed class CountingClient(TicketMetadataResponse? metadata) : ITicketsApiClient
+    {
+        public int MetadataCalls { get; private set; }
+
+        public bool FailNextCall { get; set; }
+
+        public Task<PagedResponse<TicketSummaryResponse>> GetTicketsAsync(
+            string? status,
+            string? priority,
+            int page,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException("This test never lists tickets.");
+
+        public Task<TicketMetadataResponse> GetMetadataAsync(CancellationToken cancellationToken)
+        {
+            MetadataCalls++;
+
+            if (FailNextCall)
+            {
+                FailNextCall = false;
+                return Task.FromException<TicketMetadataResponse>(
+                    new ApiRequestException("The API could not complete the request.", 500));
+            }
+
+            return Task.FromResult(metadata!);
+        }
+    }
+
+    private static TicketMetadataResponse Metadata() => new(
+        Statuses: ["New", "Open"],
+        Priorities: ["Low", "Normal"],
+        Transitions: new Dictionary<string, IReadOnlyList<string>> { ["New"] = ["Open"], ["Open"] = [] });
+
+    [Fact]
+    public async Task GetAsync_FetchesOnceAcrossMultipleCalls()
+    {
+        var client = new CountingClient(Metadata());
+        var provider = new TicketMetadataProvider(client);
+
+        await provider.GetAsync();
+        await provider.GetAsync();
+        await provider.GetAsync();
+
+        Assert.Equal(1, client.MetadataCalls);
+    }
+
+    [Fact]
+    public async Task GetAsync_RetriesAfterAFailure()
+    {
+        var client = new CountingClient(Metadata()) { FailNextCall = true };
+        var provider = new TicketMetadataProvider(client);
+
+        await Assert.ThrowsAsync<ApiRequestException>(() => provider.GetAsync());
+
+        // A cached faulted task would replay the failure forever.
+        var metadata = await provider.GetAsync();
+
+        Assert.Equal(2, client.MetadataCalls);
+        Assert.Equal(2, metadata.Statuses.Count);
+    }
+}

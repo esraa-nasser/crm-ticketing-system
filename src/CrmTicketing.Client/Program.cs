@@ -16,5 +16,8 @@ var apiBaseAddress = builder.Configuration["Api:BaseAddress"]
 
 builder.Services.AddHttpClient<SystemApiClient>(client =>
     client.BaseAddress = new Uri(apiBaseAddress));
+builder.Services.AddHttpClient<ITicketsApiClient, TicketsApiClient>(client =>
+    client.BaseAddress = new Uri(apiBaseAddress));
+builder.Services.AddScoped<TicketMetadataProvider>();
 
 await builder.Build().RunAsync();
