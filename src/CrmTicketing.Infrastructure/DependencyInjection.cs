@@ -1,4 +1,5 @@
 using CrmTicketing.Domain.Tickets;
+using CrmTicketing.Infrastructure.Identity;
 using CrmTicketing.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -39,6 +40,35 @@ public static class DependencyInjection
         services.AddDbContext<CrmDbContext>(options => options.UseNpgsql(connectionString));
         services.AddScoped<ITicketRepository, TicketRepository>();
 
+        // AddIdentityCore, not AddIdentity: the latter wires cookie authentication,
+        // which this API does not use and which would add a second scheme nobody
+        // asked for.
+        services.AddIdentityCore<ApplicationUser>(options => options.User.RequireUniqueEmail = true)
+            .AddRoles<ApplicationRole>()
+            .AddEntityFrameworkStores<CrmDbContext>();
+
         return services;
+    }
+
+    /// <summary>
+    /// Seeds the application roles. Idempotent: safe to call on every startup.
+    /// </summary>
+    /// <remarks>
+    /// A sibling to <see cref="AddPersistence"/> so the API composition root keeps
+    /// naming exactly one Infrastructure extension and no Identity type. Opens its own
+    /// scope because <c>RoleManager</c> is scoped and the root provider cannot resolve
+    /// it.
+    /// </remarks>
+    public static async Task SeedIdentityRolesAsync(
+        this IServiceProvider services,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        using var scope = services.GetRequiredService<IServiceScopeFactory>().CreateScope();
+
+        await IdentitySeeder
+            .SeedRolesAsync(scope.ServiceProvider, cancellationToken)
+            .ConfigureAwait(false);
     }
 }
