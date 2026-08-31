@@ -10,14 +10,14 @@ why** — the questions a reviewer is most likely to ask.
 
 A working three-tier ticketing system: Blazor WebAssembly client, ASP.NET Core
 Web API, PostgreSQL. The ticket domain model, its persistence, its complete HTTP
-surface, and the ticket list screen are implemented, tested, and merged.
-Authentication is specified and planned but not implemented.
+surface, the ticket list screen, and identity with role-based authorisation are
+implemented, tested, and merged.
 
 | | |
 |---|---|
-| Stories merged | 5 |
-| GitHub issues closed | #3, #8, #9, #10, #12 |
-| Tests | 171, across four projects, passing with no API and no database |
+| Stories merged | 6 |
+| GitHub issues closed | #3, #5, #6, #8, #9, #10, #12 |
+| Tests | 242, across four projects, passing with no API and no database |
 | Merges to `main` | All via pull request, gated on build, test, and an SDD check |
 | Live verification | Every endpoint exercised against a real PostgreSQL database |
 
@@ -54,9 +54,29 @@ for malformed input and a 500 for a genuine fault. A metadata endpoint publishes
 the statuses, priorities, and transition map so clients render legal actions
 from the server rather than re-encoding the rules.
 
+**Identity and authorisation** (`CrmTicketing.Infrastructure`, `CrmTicketing.Api`)
+
+ASP.NET Core Identity over the same PostgreSQL database, with `Guid` keys so the
+requester and assignee fields that were previously opaque now reference real
+users. Three seeded roles — Admin, Agent, Customer — and bearer-token sign-in.
+Every ticket endpoint requires an authenticated caller.
+
+A Customer sees only the tickets they raised, and that constraint lives in
+`TicketRepository` rather than in a controller or a screen, so no future caller
+can bypass it. Requesting another customer's ticket returns 404 rather than 403,
+because a 403 confirms the ticket exists.
+
+Every mutation now records who made it. A requester may withdraw their own ticket
+or reject a resolution; every other transition is staff-only and returns 403 —
+distinct from the 409 that means the workflow itself forbids the move.
+
+Identity types live only in Infrastructure. The domain still has zero package
+references and knows nothing about users.
+
 **Client** (`CrmTicketing.Client`)
 
-A ticket list screen: paged, filterable by status and priority, with filter
+A sign-in screen, a bearer token held in memory rather than `localStorage`, and a
+ticket list screen: paged, filterable by status and priority, with filter
 options fetched from the API rather than hardcoded. Filter and page state live in
 the URL, so a filtered view is linkable and the browser back button works. Four
 visually distinct states — loading, rows, empty, failed — so a connection failure
@@ -79,6 +99,7 @@ plans, before any code existed:
 | 03 | Transition counts wrong in six places; the code was right, the prose was not |
 | 04 | Mandated an exception message that contradicted an existing assertion |
 | 05 | Specified an exception class that could not compile; a section arguing against its own acceptance criteria; a verification step whose `grep` would report generated code as a violation |
+| 06 | A foreign key that would turn a working request into a 500; JWT role claims that would silently fail every role check; a seeder with no call site; a bootstrap gap making the whole story unusable; a transition rule expressed as prose that permitted a customer to self-triage |
 | 06 | A foreign key that would turn a working request into a 500; JWT role claims that would silently fail every role check |
 
 Additionally, an error-contract design was changed after capturing a real API
@@ -105,9 +126,8 @@ now used as test fixtures rather than hand-written ones.
 
 | Area | Issues | Status |
 |---|---|---|
-| **Identity, roles, authorisation** | #5, #6 | **Next.** Intake and a 489-line reviewed plan exist. Not started. |
-| Ticket detail view and write actions | #13 | Blocked on the above — it needs an acting user. |
-| Permission-gated UI | #16 | Cosmetic until endpoints refuse the call. |
+| Ticket detail view and write actions | #13 | **Next.** Authorisation is in place, so writes can now be attributed. |
+| Permission-gated UI | #16 | Endpoints already refuse the call; this hides controls a role cannot use. |
 | Kanban board | #14 | Consumes the transition map the API already publishes. |
 | Comments and activity timeline | #11 | Needs an aggregate-boundary decision of its own. |
 | Seed data | #4 | Small; deferred behind features. |
@@ -117,19 +137,27 @@ now used as test fixtures rather than hand-written ones.
 
 ### On authentication specifically
 
-Authentication was originally scheduled *after* the remaining UI. It was moved
-ahead of it during planning, for a reason worth stating plainly: **every mutation
-in the system is currently anonymous.** A ticket records when it was created and
-last changed, but not by whom. That gap cannot be backfilled honestly, and it
-widens with every ticket created — so it is the one remaining item that gets
-strictly more expensive the longer it waits. Everything else on the list costs
-the same whenever it is done.
+Authentication was originally scheduled *after* the remaining UI, and was moved
+ahead of it during planning. The reason is worth stating plainly, because it is
+the clearest example of sequencing by cost rather than by visibility: **every
+mutation was anonymous.** A ticket recorded when it changed but not who changed
+it, and that gap cannot be backfilled honestly — it widens with every ticket
+created. It was the one remaining item that got strictly more expensive the
+longer it waited. Everything else costs the same whenever it is done.
 
-The second reason is that a customer-facing portal makes `GET /api/tickets` a
-security boundary: a customer must see only their own tickets. That belongs in
-the repository, not in a screen. Building the detail view and the board on top of
-an unfiltered query and retrofitting the filter underneath three screens is how
-a disclosure bug happens.
+The second reason was that a customer-facing portal makes `GET /api/tickets` a
+security boundary. Building the detail view and the board on an unfiltered query
+and retrofitting the filter underneath three screens is how a disclosure bug
+happens. Doing it first meant the filter went into `TicketRepository` with one
+caller instead of three.
+
+The story was implemented against a plan that went through five rounds of
+review. Two of the defects found would each have cost a day: a foreign key that
+turned a working request into a 500, and JWT role claims that silently fail every
+role check while looking like a policy bug. A third — the plan specified an
+account-creation endpoint that requires an Admin, on a system with no way to
+create the first one — would have shipped an authentication system nobody could
+log into.
 
 ---
 
@@ -141,6 +169,9 @@ a disclosure bug happens.
   paging.** These are exercised through a fake, so a mistake in the translation
   to SQL would not be caught. This matters more once authorisation adds a
   security-critical filter to the same code.
+- No automated test exercises a real HTTP 401 or 404. Authorisation is asserted at
+  the attribute level by reflection and verified by hand against a running API;
+  there is no integration-test host. Same root cause as #29.
 - Row ordering in the list is unverified. It appears newest-first and is
   consistent with the query, but no test asserts it, so no UI copy claims it.
 
@@ -148,15 +179,23 @@ a disclosure bug happens.
 
 ## Anticipated questions
 
-**Why is there no login screen?**
-Deliberate sequencing, not an omission. Authorising a request requires knowing
-what is being authorised — the aggregate, the endpoints, and the query surface
-all had to exist first. It is the next story, with a reviewed plan.
+**How do you know the authorisation actually works?**
+It was exercised live against real PostgreSQL with real tokens, not only by
+tests. Signed in as a seeded Admin, created an Agent and a Customer, then
+confirmed: the Agent's list returns two tickets where the Customer's returns one,
+with the total count constrained to match; a Customer creating a ticket in
+someone else's name has the requester forced to their own id; reading or
+transitioning another customer's ticket returns 404; assignment is refused for a
+Customer and succeeds for an Agent.
+
+The unit tests were also checked for whether they *bite*: the access rule was
+temporarily removed and the suite re-run, and exactly the expected tests failed.
+A test that passes whether or not the rule exists is worse than no test.
 
 **Can a user create a ticket?**
-Over the API, yes — verified live, returning 201 with a correct `Location`
-header. Not from the UI: the list screen is read-only, and write actions are
-issue #13, which follows authentication because it needs an acting user.
+Over the API, yes — verified live. Not from the UI: the list screen is read-only,
+and write actions are issue #13, which now has an acting user to attribute them
+to.
 
 **How do you know it works?**
 Two independent ways. 171 automated tests that run with no API and no database.
@@ -166,7 +205,7 @@ cannot: that `Location` resolves, that a value object materialises on read, that
 returns 409 with the attempted values — including after a process restart, which
 proved the refusal came from stored state rather than a cached object.
 
-**Five stories seems slow.**
+**Six stories seems slow.**
 The specification work is front-loaded, and it substitutes for rework. The table
 above lists defects caught before code existed, including two in the auth plan
 that would each have cost a day of debugging. The remaining work is also
