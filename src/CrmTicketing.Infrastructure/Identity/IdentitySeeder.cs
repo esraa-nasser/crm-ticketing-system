@@ -58,7 +58,7 @@ internal static class IdentitySeeder
                 // Fail loudly at startup: a missing role means every policy naming it
                 // rejects every caller, which is far harder to diagnose later.
                 throw new InvalidOperationException(
-                    $"Could not seed the '{roleName}' role: " + Describe(result));
+                    $"Could not seed the '{roleName}' role: " + IdentityErrors.Describe(result));
             }
         }
     }
@@ -102,7 +102,7 @@ internal static class IdentitySeeder
             // Present-but-weak is an error. Skipping silently would leave an operator
             // believing an Admin account exists when none does.
             throw new InvalidOperationException(
-                $"Could not create the bootstrap Admin from '{BootstrapAdminSection}': " + Describe(created));
+                $"Could not create the bootstrap Admin from '{BootstrapAdminSection}': " + IdentityErrors.Describe(created));
         }
 
         var assigned = await userManager.AddToRoleAsync(admin, RoleNames.Admin).ConfigureAwait(false);
@@ -113,12 +113,7 @@ internal static class IdentitySeeder
             await userManager.DeleteAsync(admin).ConfigureAwait(false);
 
             throw new InvalidOperationException(
-                $"Could not place the bootstrap Admin in the '{RoleNames.Admin}' role: " + Describe(assigned));
+                $"Could not place the bootstrap Admin in the '{RoleNames.Admin}' role: " + IdentityErrors.Describe(assigned));
         }
     }
-
-    // Identity error descriptions only. The configured password never appears in a
-    // message (docs/constitution.md §VI).
-    private static string Describe(IdentityResult result) =>
-        string.Join("; ", result.Errors.Select(e => e.Description));
 }

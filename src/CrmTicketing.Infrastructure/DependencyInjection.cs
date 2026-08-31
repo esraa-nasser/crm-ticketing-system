@@ -70,7 +70,16 @@ public static class DependencyInjection
 
         using var scope = services.GetRequiredService<IServiceScopeFactory>().CreateScope();
 
+        // Ordering, and every stage depends on the one before it:
+        //   roles -> bootstrap Admin -> (only if the flag is on) demo users -> tickets
+        // Roles before users, the Admin before demo seeding will run at all, and users
+        // before tickets because the requester_id foreign key rejects a ticket whose
+        // requester does not exist. Sequential and awaited, never concurrent.
         await IdentitySeeder
+            .SeedAsync(scope.ServiceProvider, cancellationToken)
+            .ConfigureAwait(false);
+
+        await DemoDataSeeder
             .SeedAsync(scope.ServiceProvider, cancellationToken)
             .ConfigureAwait(false);
     }

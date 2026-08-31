@@ -163,6 +163,27 @@ dotnet user-secrets set "Jwt:SigningKey" "<at least 32 characters>" --project sr
 
 The API refuses to start without it rather than falling back to a default.
 
+### Seed demo data (optional)
+
+A dozen tickets and two extra users — an Agent and a Customer — so the app has something
+to show without creating tickets by hand. Off unless you switch it on:
+
+```bash
+dotnet user-secrets set "Seed:Demo:Enabled" "true" --project src/CrmTicketing.Api
+dotnet user-secrets set "Seed:Demo:AgentEmail" "agent@example.com" --project src/CrmTicketing.Api
+dotnet user-secrets set "Seed:Demo:CustomerEmail" "customer@example.com" --project src/CrmTicketing.Api
+dotnet user-secrets set "Seed:Demo:Password" "<a real password>" --project src/CrmTicketing.Api
+```
+
+Seeding runs at startup, after the bootstrap Admin. It **requires** that Admin to exist —
+with the flag on and no Admin configured, startup fails rather than producing a demo
+missing a third of its roles. It also **refuses if the ticket table is not empty**: it
+never merges demo rows into a database you are already using. To reseed, drop and
+recreate the database and run the migrations again.
+
+Sign in as the Customer to see nine tickets, or as the Agent to see all twelve — the
+difference is row-level filtering doing its job.
+
 ### Apply the migrations
 
 ```bash
@@ -198,7 +219,8 @@ dotnet run --project src/CrmTicketing.Client
 Then open **<http://localhost:5098/tickets>**.
 
 Sign in with the bootstrap Admin. The database starts empty, so create a ticket — note
-that every call now needs a token:
+that every call now needs a token. (If you switched on demo seeding above, skip this:
+you already have twelve tickets and two more users.)
 
 ```bash
 TOKEN=$(curl -sk -X POST -H "Content-Type: application/json" --data-binary @- \

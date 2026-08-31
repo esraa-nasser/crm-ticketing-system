@@ -10,14 +10,14 @@ why** — the questions a reviewer is most likely to ask.
 
 A working three-tier ticketing system: Blazor WebAssembly client, ASP.NET Core
 Web API, PostgreSQL. The ticket domain model, its persistence, its complete HTTP
-surface, the ticket list screen, and identity with role-based authorisation are
-implemented, tested, and merged.
+surface, the ticket list screen, identity with role-based authorisation, and a
+seeded demo dataset are implemented, tested, and merged.
 
 | | |
 |---|---|
-| Stories merged | 6 |
-| GitHub issues closed | #3, #5, #6, #8, #9, #10, #12 |
-| Tests | 242, across four projects, passing with no API and no database |
+| Stories merged | 7 |
+| GitHub issues closed | #3, #4, #5, #6, #8, #9, #10, #12 |
+| Tests | 254, across four projects, passing with no API and no database |
 | Merges to `main` | All via pull request, gated on build, test, and an SDD check |
 | Live verification | Every endpoint exercised against a real PostgreSQL database |
 
@@ -73,6 +73,28 @@ distinct from the 409 that means the workflow itself forbids the move.
 Identity types live only in Infrastructure. The domain still has zero package
 references and knows nothing about users.
 
+**Demo data** (`CrmTicketing.Infrastructure`)
+
+Twelve tickets and two further users — an Agent and a Customer — seeded at startup
+so the system is demonstrable from an empty database. Off unless
+`Seed:Demo:Enabled` is explicitly true, and not keyed off the environment name: a
+shared development environment is still someone's environment.
+
+Every seeded ticket is built by `Ticket.Open` and moved by `TransitionTo`, never by
+an `INSERT`, so a seeded row cannot exist in a state the aggregate forbids — and
+each seeding startup walks the transition table, which is a free smoke test of the
+story 03 rules against a real database.
+
+Nine of the twelve are raised by the Customer and three by the Agent, so signing in
+as each shows **9 tickets versus 12**. That split is the point: it is the visible
+evidence that row-level filtering is doing something.
+
+It refuses rather than merges. A ticket table that already holds rows is left
+entirely alone, because adding demo data to a database someone is using cannot be
+undone by re-running anything. It also requires the bootstrap Admin to exist and
+fails loudly if it does not, rather than producing a demo missing a third of its
+roles.
+
 **Client** (`CrmTicketing.Client`)
 
 A sign-in screen, a bearer token held in memory rather than `localStorage`, and a
@@ -100,7 +122,7 @@ plans, before any code existed:
 | 04 | Mandated an exception message that contradicted an existing assertion |
 | 05 | Specified an exception class that could not compile; a section arguing against its own acceptance criteria; a verification step whose `grep` would report generated code as a violation |
 | 06 | A foreign key that would turn a working request into a 500; JWT role claims that would silently fail every role check; a seeder with no call site; a bootstrap gap making the whole story unusable; a transition rule expressed as prose that permitted a customer to self-triage |
-| 06 | A foreign key that would turn a working request into a 500; JWT role claims that would silently fail every role check |
+| 07 | A guard that returned silently where its neighbour threw, for the same failure; a miscounted row in the plan's own data table; two edge cases citing the wrong guard after a renumber; a verification `grep` matching every type whose name merely starts with `Ticket` |
 
 Additionally, an error-contract design was changed after capturing a real API
 response: the planned three-field problem-details record would have shown users
@@ -130,7 +152,6 @@ now used as test fixtures rather than hand-written ones.
 | Permission-gated UI | #16 | Endpoints already refuse the call; this hides controls a role cannot use. |
 | Kanban board | #14 | Consumes the transition map the API already publishes. |
 | Comments and activity timeline | #11 | Needs an aggregate-boundary decision of its own. |
-| Seed data | #4 | Small; deferred behind features. |
 | Repository integration tests | #29 | Query logic has unit coverage; nothing exercises it against a real database. |
 | SLA policies | #21 | Needs business-hours arithmetic. |
 | Accounts, contacts, reporting | — | Two feature areas with no intake written; unspecified, not merely unbuilt. |
@@ -214,7 +235,7 @@ expensive to reverse — the aggregate boundary, the layer graph, the error
 contract, the persistence convention — are settled and verified.
 
 **Is it production-ready?**
-No, and it is not claimed to be. It needs authentication, seed data, the health
+No, and it is not claimed to be. It needs the health
 check fixed, integration tests behind the repository, and a deployment story.
 
 **What would you do differently?**
