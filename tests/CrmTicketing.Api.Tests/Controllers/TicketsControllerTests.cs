@@ -1,10 +1,16 @@
+using System.Reflection;
+using System.Security.Claims;
+using CrmTicketing.Api.Configuration;
 using CrmTicketing.Api.Controllers;
 using CrmTicketing.Api.Infrastructure;
 using CrmTicketing.Domain.Tickets;
+using CrmTicketing.Infrastructure.Identity;
 using CrmTicketing.Shared.Contracts.Tickets;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
+using Microsoft.AspNetCore.Mvc.Routing;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 
 namespace CrmTicketing.Api.Tests.Controllers;
@@ -30,8 +36,12 @@ public sealed class TicketsControllerTests
 
         public void Seed(params Ticket[] seeded) => tickets.AddRange(seeded);
 
-        public Task<Ticket?> GetAsync(Guid id, CancellationToken cancellationToken) =>
-            Task.FromResult(tickets.Find(t => t.Id == id));
+        public Task<Ticket?> GetAsync(Guid id, TicketAccess access, CancellationToken cancellationToken) =>
+            // Mirrors the real repository: a ticket the caller may not see comes back
+            // null, so the controller answers 404 rather than 403.
+            Task.FromResult(tickets.Find(t =>
+                t.Id == id
+                && (access.RestrictedToRequesterId is not { } owner || t.RequesterId == owner)));
 
         public Task AddAsync(Ticket ticket, CancellationToken cancellationToken)
         {
@@ -59,10 +69,19 @@ public sealed class TicketsControllerTests
         }
 
         private IEnumerable<Ticket> Filter(TicketQuery query) => tickets.Where(t =>
-            (query.Status is null || t.Status == query.Status)
+            (query.Access.RestrictedToRequesterId is not { } owner || t.RequesterId == owner)
+            && (query.Status is null || t.Status == query.Status)
             && (query.Priority is null || t.Priority == query.Priority)
             && (query.AssigneeId is null || t.AssigneeId == query.AssigneeId)
             && (query.RequesterId is null || t.RequesterId == query.RequesterId));
+    }
+
+    // Always answers yes: these tests never exercise the unknown-requester path, and
+    // the one that does asserts against a directory that answers no.
+    private sealed class FakeUserDirectory(bool exists = true) : IUserDirectory
+    {
+        public Task<bool> ExistsAsync(Guid userId, CancellationToken cancellationToken) =>
+            Task.FromResult(exists);
     }
 
     // ControllerBase resolves this from HttpContext.RequestServices, which a unit
@@ -97,10 +116,37 @@ public sealed class TicketsControllerTests
             };
     }
 
-    private static TicketsController CreateController(FakeTicketRepository repository) =>
-        new(repository, new FixedTimeProvider(Now))
+    // The acting user for tests that do not care who is calling. Staff by default,
+    // so existing assertions about unfiltered reads keep their original meaning.
+    private static readonly Guid ActorId = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001");
+
+    private static ClaimsPrincipal Principal(Guid userId, params string[] roles)
+    {
+        // Claim types must match what AuthenticationSetup pins, or IsInRole and the
+        // user-id lookup both silently find nothing.
+        var claims = new List<Claim> { new(AuthenticationSetup.UserIdClaimType, userId.ToString()) };
+        claims.AddRange(roles.Select(r => new Claim(AuthenticationSetup.RoleClaimType, r)));
+
+        return new ClaimsPrincipal(new ClaimsIdentity(
+            claims,
+            authenticationType: "Test",
+            nameType: AuthenticationSetup.NameClaimType,
+            roleType: AuthenticationSetup.RoleClaimType));
+    }
+
+    private static TicketsController CreateController(
+        FakeTicketRepository repository,
+        ClaimsPrincipal? user = null,
+        IUserDirectory? userDirectory = null) =>
+        new(repository, userDirectory ?? new FakeUserDirectory(), new FixedTimeProvider(Now))
         {
-            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = user ?? Principal(ActorId, RoleNames.Agent),
+                },
+            },
             ProblemDetailsFactory = new TestProblemDetailsFactory(),
         };
 
@@ -117,6 +163,7 @@ public sealed class TicketsControllerTests
             "It started smoking after the firmware update.",
             requesterId ?? Guid.NewGuid(),
             createdAt ?? Now,
+            ActorId,
             priority);
 
         switch (status)
@@ -124,18 +171,18 @@ public sealed class TicketsControllerTests
             case TicketStatus.New:
                 break;
             case TicketStatus.Open:
-                ticket.TransitionTo(TicketStatus.Open, Now);
+                ticket.TransitionTo(TicketStatus.Open, Now, ActorId);
                 break;
             case TicketStatus.Pending:
-                ticket.TransitionTo(TicketStatus.Open, Now);
-                ticket.TransitionTo(TicketStatus.Pending, Now);
+                ticket.TransitionTo(TicketStatus.Open, Now, ActorId);
+                ticket.TransitionTo(TicketStatus.Pending, Now, ActorId);
                 break;
             case TicketStatus.Resolved:
-                ticket.TransitionTo(TicketStatus.Open, Now);
-                ticket.TransitionTo(TicketStatus.Resolved, Now);
+                ticket.TransitionTo(TicketStatus.Open, Now, ActorId);
+                ticket.TransitionTo(TicketStatus.Resolved, Now, ActorId);
                 break;
             case TicketStatus.Closed:
-                ticket.TransitionTo(TicketStatus.Closed, Now);
+                ticket.TransitionTo(TicketStatus.Closed, Now, ActorId);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(status));
@@ -143,7 +190,7 @@ public sealed class TicketsControllerTests
 
         if (assigneeId is { } assignee && status != TicketStatus.Closed)
         {
-            ticket.Assign(assignee, Now);
+            ticket.Assign(assignee, Now, ActorId);
         }
 
         return ticket;
@@ -527,5 +574,231 @@ public sealed class TicketsControllerTests
                 Assert.Contains(target.ToString(), published);
             }
         }
+    }
+
+    // ---- Story 06: authorisation and the Customer path ----
+
+    private static readonly Guid CustomerId = Guid.Parse("cccccccc-0000-0000-0000-000000000003");
+    private static readonly Guid OtherCustomerId = Guid.Parse("dddddddd-0000-0000-0000-000000000004");
+
+    private static ClaimsPrincipal Customer(Guid? id = null) =>
+        Principal(id ?? CustomerId, RoleNames.Customer);
+
+    [Fact]
+    public void EveryAction_RequiresAnAuthenticatedCaller()
+    {
+        // Asserted by reflection rather than by counting attributes: a class-level
+        // [Authorize] plus an action-level [AllowAnonymous] would pass a grep and
+        // still be anonymous.
+        var type = typeof(TicketsController);
+        Assert.NotEmpty(type.GetCustomAttributes(typeof(AuthorizeAttribute), inherit: true));
+
+        var actions = type
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .Where(m => m.GetCustomAttributes(typeof(HttpMethodAttribute), inherit: true).Length > 0)
+            .ToList();
+
+        Assert.Equal(7, actions.Count);
+
+        foreach (var action in actions)
+        {
+            Assert.Empty(action.GetCustomAttributes(typeof(AllowAnonymousAttribute), inherit: true));
+        }
+    }
+
+    [Fact]
+    public void Assign_IsRestrictedToStaffByPolicy()
+    {
+        var assign = typeof(TicketsController).GetMethod(nameof(TicketsController.Assign));
+        Assert.NotNull(assign);
+
+        var authorize = assign
+            .GetCustomAttributes(typeof(AuthorizeAttribute), inherit: true)
+            .Cast<AuthorizeAttribute>()
+            .ToList();
+
+        Assert.Contains(authorize, a => a.Policy == AuthorizationPolicies.StaffOnly);
+    }
+
+    [Fact]
+    public async Task Create_AsCustomer_ForcesTheirOwnIdAsRequester()
+    {
+        var repository = new FakeTicketRepository();
+        var controller = CreateController(repository, Customer());
+
+        // The body names someone else. Honouring it would let a customer raise a
+        // ticket they immediately cannot see, which reads as data loss.
+        var result = await controller.Create(
+            new CreateTicketRequest("Printer is on fire", "Smoke.", OtherCustomerId, null, null),
+            CancellationToken.None);
+
+        var response = Assert.IsType<TicketResponse>(
+            Assert.IsType<CreatedAtActionResult>(result.Result).Value);
+
+        Assert.Equal(CustomerId, response.RequesterId);
+        Assert.NotEqual(OtherCustomerId, response.RequesterId);
+        Assert.Equal(CustomerId, Assert.Single(repository.Tickets).CreatedBy);
+    }
+
+    [Fact]
+    public async Task Create_AsStaff_HonoursTheRequesterInTheBody()
+    {
+        var repository = new FakeTicketRepository();
+        var controller = CreateController(repository, Principal(ActorId, RoleNames.Agent));
+
+        var result = await controller.Create(
+            new CreateTicketRequest("Printer is on fire", "Smoke.", CustomerId, null, null),
+            CancellationToken.None);
+
+        var response = Assert.IsType<TicketResponse>(
+            Assert.IsType<CreatedAtActionResult>(result.Result).Value);
+
+        Assert.Equal(CustomerId, response.RequesterId);
+        // Raised on the customer's behalf, but the agent is who did it.
+        Assert.Equal(ActorId, Assert.Single(repository.Tickets).CreatedBy);
+    }
+
+    [Fact]
+    public async Task Create_AsStaff_WithAnUnknownRequester_Returns400()
+    {
+        var repository = new FakeTicketRepository();
+        var controller = CreateController(
+            repository,
+            Principal(ActorId, RoleNames.Agent),
+            new FakeUserDirectory(exists: false));
+
+        // requester_id carries a foreign key. Without this check the insert fails in
+        // the database and the caller gets a 500.
+        var result = await controller.Create(
+            new CreateTicketRequest("Printer is on fire", "Smoke.", CustomerId, null, null),
+            CancellationToken.None);
+
+        Assert.Equal(
+            StatusCodes.Status400BadRequest,
+            Assert.IsAssignableFrom<ObjectResult>(result.Result).StatusCode);
+        Assert.Empty(repository.Tickets);
+    }
+
+    [Fact]
+    public async Task GetById_AsCustomer_AnotherCustomersTicket_Returns404NotForbidden()
+    {
+        var repository = new FakeTicketRepository();
+        var theirs = SeededTicket(requesterId: OtherCustomerId);
+        repository.Seed(theirs);
+        var controller = CreateController(repository, Customer());
+
+        var result = await controller.GetById(theirs.Id, CancellationToken.None);
+
+        // 404, never 403: a 403 confirms the ticket exists.
+        var problem = Assert.IsAssignableFrom<ObjectResult>(result.Result);
+        Assert.Equal(StatusCodes.Status404NotFound, problem.StatusCode);
+        Assert.NotEqual(StatusCodes.Status403Forbidden, problem.StatusCode);
+    }
+
+    [Fact]
+    public async Task List_AsCustomer_ReturnsOnlyTheirOwnTickets()
+    {
+        var repository = new FakeTicketRepository();
+        var mine = SeededTicket(requesterId: CustomerId);
+        repository.Seed(mine, SeededTicket(requesterId: OtherCustomerId), SeededTicket(requesterId: OtherCustomerId));
+        var controller = CreateController(repository, Customer());
+
+        var result = await controller.List(CancellationToken.None);
+
+        var page = Assert.IsType<PagedResponse<TicketSummaryResponse>>(
+            Assert.IsType<OkObjectResult>(result.Result).Value);
+
+        Assert.Equal(mine.Id, Assert.Single(page.Items).Id);
+        // The total is constrained too, or it discloses how many tickets exist.
+        Assert.Equal(1, page.TotalCount);
+    }
+
+    [Fact]
+    public async Task Transition_AsCustomer_ToAStaffOnlyStatus_Returns403()
+    {
+        var repository = new FakeTicketRepository();
+        var ticket = SeededTicket(TicketStatus.Open, requesterId: CustomerId);
+        repository.Seed(ticket);
+        var controller = CreateController(repository, Customer());
+
+        // Open -> Pending is legal in the workflow; this caller may not make it.
+        // 403, not 409 — conflating them would make the metadata endpoint look wrong.
+        var result = await controller.Transition(
+            ticket.Id,
+            new TransitionTicketRequest(nameof(TicketStatus.Pending)),
+            CancellationToken.None);
+
+        Assert.IsType<ForbidResult>(result.Result);
+        Assert.Equal(TicketStatus.Open, ticket.Status);
+        Assert.Equal(0, repository.SaveChangesCount);
+    }
+
+    [Theory]
+    [InlineData(nameof(TicketStatus.Closed))]
+    public async Task Transition_AsCustomer_ToAnAllowedStatus_Returns200(string target)
+    {
+        var repository = new FakeTicketRepository();
+        var ticket = SeededTicket(TicketStatus.Open, requesterId: CustomerId);
+        repository.Seed(ticket);
+        var controller = CreateController(repository, Customer());
+
+        var result = await controller.Transition(
+            ticket.Id,
+            new TransitionTicketRequest(target),
+            CancellationToken.None);
+
+        var response = Assert.IsType<TicketResponse>(
+            Assert.IsType<OkObjectResult>(result.Result).Value);
+
+        Assert.Equal(target, response.Status);
+        // The actor is recorded on the aggregate; TicketResponse does not carry it.
+        Assert.Equal(CustomerId, ticket.UpdatedBy);
+        Assert.Equal(1, repository.SaveChangesCount);
+    }
+
+    [Fact]
+    public async Task Transition_AsCustomer_AnotherCustomersTicket_Returns404()
+    {
+        var repository = new FakeTicketRepository();
+        var theirs = SeededTicket(TicketStatus.Open, requesterId: OtherCustomerId);
+        repository.Seed(theirs);
+        var controller = CreateController(repository, Customer());
+
+        var result = await controller.Transition(
+            theirs.Id,
+            new TransitionTicketRequest(nameof(TicketStatus.Closed)),
+            CancellationToken.None);
+
+        Assert.Equal(
+            StatusCodes.Status404NotFound,
+            Assert.IsAssignableFrom<ObjectResult>(result.Result).StatusCode);
+    }
+
+    [Theory]
+    [InlineData(RoleNames.Admin)]
+    [InlineData(RoleNames.Agent)]
+    public void Access_MapsStaffToUnrestricted(string role) =>
+        Assert.Null(Principal(ActorId, role).Access().RestrictedToRequesterId);
+
+    [Fact]
+    public void Access_MapsCustomerToTheirOwnTickets() =>
+        Assert.Equal(CustomerId, Customer().Access().RestrictedToRequesterId);
+
+    [Fact]
+    public void Access_MapsAnUnknownRoleToTheirOwnTickets()
+    {
+        // The safer default when a role is missing is less visibility, not more.
+        var principal = Principal(CustomerId);
+
+        Assert.Equal(CustomerId, principal.Access().RestrictedToRequesterId);
+        Assert.False(principal.IsStaff());
+    }
+
+    [Fact]
+    public void UserId_ThrowsWhenTheClaimIsAbsent()
+    {
+        var anonymous = new ClaimsPrincipal(new ClaimsIdentity());
+
+        Assert.Throws<InvalidOperationException>(() => anonymous.UserId());
     }
 }

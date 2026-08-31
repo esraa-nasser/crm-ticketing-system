@@ -42,7 +42,14 @@ else if (_error is not null)
     <div class="alert alert-danger" role="alert">
         <strong>Could not load tickets.</strong>
         <p class="mb-2">@_error</p>
-        <button type="button" class="btn btn-sm btn-outline-danger" @onclick="Reload">Retry</button>
+        @if (_needsSignIn)
+        {
+            <a class="btn btn-sm btn-outline-danger" href="signin?returnUrl=tickets">Sign in</a>
+        }
+        else
+        {
+            <button type="button" class="btn btn-sm btn-outline-danger" @onclick="Reload">Retry</button>
+        }
     </div>
 }
 else if (_result is null || _result.Items.Count == 0)
@@ -111,6 +118,10 @@ else
     private string? _error;
     private bool _loading;
 
+    // A 401 is not something Retry can fix. Read from the status code the client
+    // already surfaces rather than by matching on the message text.
+    private bool _needsSignIn;
+
     // Suppresses a redundant reload when parameters are set but unchanged.
     private (string? Status, string? Priority, int? Page)? _loaded;
 
@@ -159,6 +170,7 @@ else
 
         _loading = true;
         _error = null;
+        _needsSignIn = false;
 
         // The two calls are independent: metadata failing must not blank the rows.
         await LoadMetadataAsync(cancellationToken);
@@ -186,6 +198,7 @@ else
             }
 
             _error = ex.Message;
+            _needsSignIn = ex is ApiRequestException { StatusCode: 401 };
             _result = null;
         }
         finally

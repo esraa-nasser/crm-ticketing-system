@@ -11,6 +11,7 @@ public sealed record TicketQuery
     public const int DefaultPageSize = 25;
 
     private TicketQuery(
+        TicketAccess access,
         TicketStatus? status,
         TicketPriority? priority,
         Guid? assigneeId,
@@ -18,6 +19,7 @@ public sealed record TicketQuery
         int page,
         int pageSize)
     {
+        Access = access;
         Status = status;
         Priority = priority;
         AssigneeId = assigneeId;
@@ -25,6 +27,9 @@ public sealed record TicketQuery
         Page = page;
         PageSize = pageSize;
     }
+
+    /// <summary>Which tickets the caller may see. Applied by the repository.</summary>
+    public TicketAccess Access { get; }
 
     public TicketStatus? Status { get; }
 
@@ -45,7 +50,12 @@ public sealed record TicketQuery
     /// Builds a query, clamping paging rather than rejecting it: an oversized
     /// page is a caller being optimistic, not a caller being wrong.
     /// </summary>
+    /// <param name="access">
+    /// Required and without a default. A caller that forgets it must fail to compile
+    /// rather than silently receive every row.
+    /// </param>
     public static TicketQuery Create(
+        TicketAccess access,
         TicketStatus? status = null,
         TicketPriority? priority = null,
         Guid? assigneeId = null,
@@ -53,6 +63,8 @@ public sealed record TicketQuery
         int page = 1,
         int pageSize = DefaultPageSize)
     {
+        ArgumentNullException.ThrowIfNull(access);
+
         var clampedPage = page < 1 ? 1 : page;
 
         var clampedPageSize = pageSize switch
@@ -62,6 +74,13 @@ public sealed record TicketQuery
             _ => pageSize,
         };
 
-        return new TicketQuery(status, priority, assigneeId, requesterId, clampedPage, clampedPageSize);
+        return new TicketQuery(
+            access,
+            status,
+            priority,
+            assigneeId,
+            requesterId,
+            clampedPage,
+            clampedPageSize);
     }
 }

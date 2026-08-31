@@ -1,4 +1,5 @@
 using CrmTicketing.Domain.Tickets;
+using CrmTicketing.Infrastructure.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -44,6 +45,17 @@ internal sealed class TicketConfiguration : IEntityTypeConfiguration<Ticket>
         // type - timestamp with time zone for DateTimeOffset, uuid for Guid.
         builder.Property(t => t.CreatedAt).IsRequired();
         builder.Property(t => t.RequesterId).IsRequired();
+        builder.Property(t => t.CreatedBy).IsRequired();
+        builder.Property(t => t.UpdatedBy).IsRequired();
+
+        // Declared without a navigation property: Ticket never learns that
+        // ApplicationUser exists. No matching key on assignee_id in this story —
+        // that would break the assign endpoint the same way, and assignment is
+        // staff-only with its own validation story. See docs/architecture.md.
+        builder.HasOne<ApplicationUser>()
+            .WithMany()
+            .HasForeignKey(t => t.RequesterId)
+            .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasIndex(t => t.RequesterId);
         builder.HasIndex(t => t.Status);

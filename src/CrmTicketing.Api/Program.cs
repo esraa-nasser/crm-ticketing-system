@@ -13,6 +13,7 @@ builder.Services.AddHealthChecks();
 builder.Services.AddBlazorClientCors(builder.Configuration);
 builder.Services.AddPersistence(builder.Configuration);
 builder.Services.AddJwtAuthentication(builder.Configuration);
+builder.Services.AddTicketAuthorization();
 
 var app = builder.Build();
 

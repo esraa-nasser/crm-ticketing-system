@@ -27,6 +27,13 @@ public static class AuthenticationSetup
     public const string NameClaimType = ClaimTypes.Name;
 
     /// <summary>
+    /// The claim type carrying the user's id. Pinned for the same reason as the
+    /// other two: the sign-in endpoint writes it and <c>CallerContext</c> reads it,
+    /// and a mismatch would make every authenticated caller look like it has no id.
+    /// </summary>
+    public const string UserIdClaimType = ClaimTypes.NameIdentifier;
+
+    /// <summary>
     /// Registers JWT bearer authentication from the <c>Jwt</c> configuration section.
     /// </summary>
     public static IServiceCollection AddJwtAuthentication(

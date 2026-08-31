@@ -13,7 +13,12 @@ namespace CrmTicketing.Domain.Tickets;
 /// </remarks>
 public interface ITicketRepository
 {
-    Task<Ticket?> GetAsync(Guid id, CancellationToken cancellationToken);
+    /// <summary>
+    /// The ticket, or null when it does not exist <em>or</em> the caller may not see
+    /// it. The two are deliberately indistinguishable: telling a customer a ticket
+    /// exists but is not theirs leaks the existence of other customers' tickets.
+    /// </summary>
+    Task<Ticket?> GetAsync(Guid id, TicketAccess access, CancellationToken cancellationToken);
 
     Task AddAsync(Ticket ticket, CancellationToken cancellationToken);
 

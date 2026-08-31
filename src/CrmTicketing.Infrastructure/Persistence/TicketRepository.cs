@@ -9,8 +9,18 @@ namespace CrmTicketing.Infrastructure.Persistence;
 /// </summary>
 internal sealed class TicketRepository(CrmDbContext context) : ITicketRepository
 {
-    public Task<Ticket?> GetAsync(Guid id, CancellationToken cancellationToken) =>
-        context.Set<Ticket>().FirstOrDefaultAsync(t => t.Id == id, cancellationToken);
+    public Task<Ticket?> GetAsync(Guid id, TicketAccess access, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(access);
+
+        // The access predicate is applied here rather than left to the controller, so
+        // a ticket the caller may not see comes back as null and the existing 404 path
+        // handles it. A caller-side check would be one refactor away from being dropped.
+        // Routed through the same ApplyAccess as Filter, so read-one and read-many
+        // cannot disagree about who may see what.
+        return ApplyAccess(context.Set<Ticket>().Where(t => t.Id == id), access)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
 
     public async Task AddAsync(Ticket ticket, CancellationToken cancellationToken) =>
         await context.Set<Ticket>().AddAsync(ticket, cancellationToken).ConfigureAwait(false);
@@ -44,8 +54,28 @@ internal sealed class TicketRepository(CrmDbContext context) : ITicketRepository
 
     // Shared by ListAsync and CountAsync so a filter can never apply to the page
     // but not the total.
-    private static IQueryable<Ticket> Filter(IQueryable<Ticket> tickets, TicketQuery query)
+    /// <summary>
+    /// Confines the query to what <paramref name="access"/> permits. The one place
+    /// the row-level rule is expressed; <see cref="GetAsync"/> and
+    /// <see cref="Filter"/> both route through it.
+    /// </summary>
+    /// <remarks>Internal so it can be tested over an in-memory queryable, with no database.</remarks>
+    internal static IQueryable<Ticket> ApplyAccess(IQueryable<Ticket> tickets, TicketAccess access) =>
+        access.RestrictedToRequesterId is { } restrictedTo
+            ? tickets.Where(t => t.RequesterId == restrictedTo)
+            : tickets;
+
+    /// <summary>
+    /// Applies access and the caller's filters. Shared by <see cref="ListAsync"/> and
+    /// <see cref="CountAsync"/> so a rule cannot constrain the page but not the count.
+    /// </summary>
+    /// <remarks>Internal so it can be tested over an in-memory queryable, with no database.</remarks>
+    internal static IQueryable<Ticket> Filter(IQueryable<Ticket> tickets, TicketQuery query)
     {
+        // Access first. A total that counts rows the caller cannot see discloses how
+        // many tickets exist.
+        tickets = ApplyAccess(tickets, query.Access);
+
         if (query.Status is { } status)
         {
             tickets = tickets.Where(t => t.Status == status);

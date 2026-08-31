@@ -65,6 +65,18 @@ public sealed class Ticket : Entity
 
     public DateTimeOffset UpdatedAt { get; private set; }
 
+    /// <summary>Who opened the ticket. Never changes after <see cref="Open"/>.</summary>
+    /// <remarks>
+    /// A private setter rather than a get-only property: <see cref="Open"/> is a
+    /// static factory assigning after the private constructor has run, which a
+    /// get-only property does not allow. The property stays closed to callers, which
+    /// is what the invariant actually requires.
+    /// </remarks>
+    public Guid CreatedBy { get; private set; }
+
+    /// <summary>Who made the most recent change.</summary>
+    public Guid UpdatedBy { get; private set; }
+
     /// <summary>
     /// Opens a new ticket. Named for the business event rather than for construction.
     /// The status is always <see cref="TicketStatus.New"/>; the caller cannot choose it.
@@ -75,6 +87,7 @@ public sealed class Ticket : Entity
         string description,
         Guid requesterId,
         DateTimeOffset createdAt,
+        Guid actorId,
         TicketPriority priority = TicketPriority.Normal,
         string? category = null)
     {
@@ -85,7 +98,9 @@ public sealed class Ticket : Entity
             throw new ArgumentException("Requester id must not be empty.", nameof(requesterId));
         }
 
-        return new Ticket(
+        RequireActor(actorId);
+
+        var ticket = new Ticket(
             id,
             title,
             NormaliseDescription(description),
@@ -93,32 +108,41 @@ public sealed class Ticket : Entity
             createdAt,
             priority,
             NormaliseCategory(category));
+
+        ticket.CreatedBy = actorId;
+        ticket.UpdatedBy = actorId;
+
+        return ticket;
     }
 
     /// <summary>
     /// Moves the ticket to <paramref name="target"/> if the transition table allows it.
     /// </summary>
     /// <exception cref="InvalidTicketTransitionException">The move is not legal.</exception>
-    public void TransitionTo(TicketStatus target, DateTimeOffset at)
+    public void TransitionTo(TicketStatus target, DateTimeOffset at, Guid actorId)
     {
+        RequireActor(actorId);
+
         if (!TicketStatusTransitions.IsAllowed(Status, target))
         {
             throw new InvalidTicketTransitionException(Status, target);
         }
 
         Status = target;
-        UpdatedAt = at;
+        Touch(at, actorId);
     }
 
     /// <summary>
     /// Assigns the ticket to an agent. A closed ticket cannot be assigned.
     /// </summary>
-    public void Assign(Guid assigneeId, DateTimeOffset at)
+    public void Assign(Guid assigneeId, DateTimeOffset at, Guid actorId)
     {
         if (assigneeId == Guid.Empty)
         {
             throw new ArgumentException("Assignee id must not be empty.", nameof(assigneeId));
         }
+
+        RequireActor(actorId);
 
         if (Status == TicketStatus.Closed)
         {
@@ -126,36 +150,46 @@ public sealed class Ticket : Entity
         }
 
         AssigneeId = assigneeId;
-        UpdatedAt = at;
+        Touch(at, actorId);
     }
 
     /// <summary>
     /// Removes the current assignee. Legal in any status other than closed.
     /// </summary>
-    public void Unassign(DateTimeOffset at)
+    public void Unassign(DateTimeOffset at, Guid actorId)
     {
+        RequireActor(actorId);
+
         if (Status == TicketStatus.Closed)
         {
             throw new TicketClosedException(Status, "unassigned");
         }
 
         AssigneeId = null;
-        UpdatedAt = at;
+        Touch(at, actorId);
     }
 
-    public void ChangePriority(TicketPriority priority, DateTimeOffset at)
+    public void ChangePriority(TicketPriority priority, DateTimeOffset at, Guid actorId)
     {
+        RequireActor(actorId);
+
         Priority = priority;
-        UpdatedAt = at;
+        Touch(at, actorId);
     }
 
     /// <summary>
     /// Corrects the descriptive fields. Legal in any status - a closed ticket may
     /// still have a typo fixed.
     /// </summary>
-    public void UpdateDetails(TicketTitle title, string description, string? category, DateTimeOffset at)
+    public void UpdateDetails(
+        TicketTitle title,
+        string description,
+        string? category,
+        DateTimeOffset at,
+        Guid actorId)
     {
         ArgumentNullException.ThrowIfNull(title);
+        RequireActor(actorId);
 
         // Normalise into locals first: a bad description must not leave the ticket
         // holding a new title and the old body.
@@ -165,7 +199,23 @@ public sealed class Ticket : Entity
         Title = title;
         Description = normalisedDescription;
         Category = normalisedCategory;
+        Touch(at, actorId);
+    }
+
+    // Who changed it and when move together; separating them is how an audit trail
+    // drifts from the thing it audits.
+    private void Touch(DateTimeOffset at, Guid actorId)
+    {
         UpdatedAt = at;
+        UpdatedBy = actorId;
+    }
+
+    private static void RequireActor(Guid actorId)
+    {
+        if (actorId == Guid.Empty)
+        {
+            throw new ArgumentException("Actor id must not be empty.", nameof(actorId));
+        }
     }
 
     private static string NormaliseDescription(string description)

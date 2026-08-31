@@ -47,6 +47,8 @@ public static class DependencyInjection
             .AddRoles<ApplicationRole>()
             .AddEntityFrameworkStores<CrmDbContext>();
 
+        services.AddScoped<IUserDirectory, UserDirectory>();
+
         return services;
     }
 
