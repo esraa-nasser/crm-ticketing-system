@@ -1,0 +1,248 @@
+@page "/tickets"
+@implements IDisposable
+@inject ITicketsApiClient TicketsApi
+@inject TicketMetadataProvider Metadata
+@inject NavigationManager Navigation
+
+<PageTitle>Tickets</PageTitle>
+
+<h1>Tickets</h1>
+
+<div class="row g-2 align-items-end mb-3">
+    <div class="col-auto">
+        <label class="form-label" for="status-filter">Status</label>
+        <select id="status-filter" class="form-select" disabled="@(_metadata is null)"
+                value="@Status" @onchange="OnStatusChanged">
+            <option value="">All</option>
+            @foreach (var status in _metadata?.Statuses ?? [])
+            {
+                <option value="@status">@status</option>
+            }
+        </select>
+    </div>
+    <div class="col-auto">
+        <label class="form-label" for="priority-filter">Priority</label>
+        <select id="priority-filter" class="form-select" disabled="@(_metadata is null)"
+                value="@Priority" @onchange="OnPriorityChanged">
+            <option value="">All</option>
+            @foreach (var priority in _metadata?.Priorities ?? [])
+            {
+                <option value="@priority">@priority</option>
+            }
+        </select>
+    </div>
+</div>
+
+@if (_loading)
+{
+    <p><em>Loading tickets…</em></p>
+}
+else if (_error is not null)
+{
+    <div class="alert alert-danger" role="alert">
+        <strong>Could not load tickets.</strong>
+        <p class="mb-2">@_error</p>
+        <button type="button" class="btn btn-sm btn-outline-danger" @onclick="Reload">Retry</button>
+    </div>
+}
+else if (_result is null || _result.Items.Count == 0)
+{
+    <div class="alert alert-secondary" role="alert">
+        <p class="mb-0">No tickets match this view.</p>
+        @if (HasFilter)
+        {
+            <a class="btn btn-sm btn-outline-secondary mt-2" href="tickets">Clear filters</a>
+        }
+    </div>
+}
+else
+{
+    <table class="table table-sm">
+        <thead>
+            <tr>
+                <th scope="col">Title</th>
+                <th scope="col">Status</th>
+                <th scope="col">Priority</th>
+                <th scope="col">Category</th>
+                <th scope="col">Assignee</th>
+                <th scope="col">Created</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var ticket in _result.Items)
+            {
+                <tr>
+                    <td>@ticket.Title</td>
+                    <td>@ticket.Status</td>
+                    <td>@ticket.Priority</td>
+                    <td>@(ticket.Category ?? "—")</td>
+                    <td>@FormatAssignee(ticket.AssigneeId)</td>
+                    <td>@ticket.CreatedAt.ToString("u")</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    <div class="d-flex align-items-center gap-2">
+        <button type="button" class="btn btn-sm btn-outline-primary"
+                disabled="@(_result.Page <= 1)" @onclick="() => GoToPage(_result.Page - 1)">
+            Previous
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-primary"
+                disabled="@(_result.Page * _result.PageSize >= _result.TotalCount)"
+                @onclick="() => GoToPage(_result.Page + 1)">
+            Next
+        </button>
+        <span class="small text-muted">
+            Showing @FirstRowNumber–@LastRowNumber of @_result.TotalCount
+        </span>
+    </div>
+}
+
+@code {
+    [SupplyParameterFromQuery] public string? Status { get; set; }
+
+    [SupplyParameterFromQuery] public string? Priority { get; set; }
+
+    [SupplyParameterFromQuery] public int? Page { get; set; }
+
+    private PagedResponse<TicketSummaryResponse>? _result;
+    private TicketMetadataResponse? _metadata;
+    private string? _error;
+    private bool _loading;
+
+    // Suppresses a redundant reload when parameters are set but unchanged.
+    private (string? Status, string? Priority, int? Page)? _loaded;
+
+    // Orders overlapping loads. A rapid filter change would otherwise let a slow
+    // response land after a fast one and paint rows contradicting the selection.
+    private CancellationTokenSource? _loadCts;
+
+    private bool HasFilter => !string.IsNullOrEmpty(Status) || !string.IsNullOrEmpty(Priority);
+
+    private int FirstRowNumber => _result is null || _result.TotalCount == 0
+        ? 0
+        : ((_result.Page - 1) * _result.PageSize) + 1;
+
+    private int LastRowNumber => _result is null
+        ? 0
+        : Math.Min(_result.Page * _result.PageSize, _result.TotalCount);
+
+    // Loads here, not in OnInitializedAsync: Blazor reuses the component instance when
+    // only the query string changes, so OnInitializedAsync would leave the table stale
+    // after every filter change.
+    protected override async Task OnParametersSetAsync()
+    {
+        var requested = (Status, Priority, Page);
+
+        if (_loaded == requested)
+        {
+            return;
+        }
+
+        _loaded = requested;
+        await LoadAsync();
+    }
+
+    private async Task Reload()
+    {
+        _loaded = null;
+        await OnParametersSetAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        _loadCts = new CancellationTokenSource();
+        var cancellationToken = _loadCts.Token;
+
+        _loading = true;
+        _error = null;
+
+        // The two calls are independent: metadata failing must not blank the rows.
+        await LoadMetadataAsync(cancellationToken);
+
+        try
+        {
+            var result = await TicketsApi.GetTicketsAsync(
+                Status,
+                Priority,
+                Page ?? 1,
+                cancellationToken);
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            _result = result;
+        }
+        catch (Exception ex) when (ex is ApiRequestException or HttpRequestException or TaskCanceledException)
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            _error = ex.Message;
+            _result = null;
+        }
+        finally
+        {
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                _loading = false;
+            }
+        }
+    }
+
+    private async Task LoadMetadataAsync(CancellationToken cancellationToken)
+    {
+        if (_metadata is not null)
+        {
+            return;
+        }
+
+        try
+        {
+            var metadata = await Metadata.GetAsync();
+
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                _metadata = metadata;
+            }
+        }
+        catch (Exception ex) when (ex is ApiRequestException or HttpRequestException or TaskCanceledException)
+        {
+            // The selects stay disabled. Rows still load.
+            _metadata = null;
+        }
+    }
+
+    private void OnStatusChanged(ChangeEventArgs args) =>
+        NavigateWith(status: args.Value as string, priority: Priority, page: 1);
+
+    private void OnPriorityChanged(ChangeEventArgs args) =>
+        NavigateWith(status: Status, priority: args.Value as string, page: 1);
+
+    private void GoToPage(int page) => NavigateWith(Status, Priority, page);
+
+    // The URI is the state store; no component field holds a filter.
+    private void NavigateWith(string? status, string? priority, int page) =>
+        Navigation.NavigateTo(Navigation.GetUriWithQueryParameters(new Dictionary<string, object?>
+        {
+            ["status"] = string.IsNullOrEmpty(status) ? null : status,
+            ["priority"] = string.IsNullOrEmpty(priority) ? null : priority,
+            ["page"] = page <= 1 ? null : page,
+        }));
+
+    private static string FormatAssignee(Guid? assigneeId) =>
+        assigneeId is { } id ? id.ToString()[..8] : "Unassigned";
+
+    public void Dispose()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+    }
+}
