@@ -33,6 +33,6 @@ explicitly rather than inheriting a default:
 |---|---|
 | Data store, ORM, migrations | `persistence` |
 | Ticket status machine and SLA model | `ticketing-core` |
-| Whether customers are a separate aggregate | `customers-crm` |
+| ~~Whether customers are a separate aggregate~~ — **settled** in [#18](https://github.com/esraa-nasser/crm-ticketing-system/issues/18): `Account` and `Contact` are separate aggregates on the `Entity` base type, in `CrmTicketing.Domain/Customers/`, with no navigation property to `Ticket`. | `customers-crm` |
 | Identity provider and role model | `auth-roles` |
 | Polling vs SignalR for live updates | `reporting-dashboard` |
