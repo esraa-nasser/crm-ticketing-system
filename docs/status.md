@@ -124,23 +124,44 @@ plans, before any code existed:
 | 06 | A foreign key that would turn a working request into a 500; JWT role claims that would silently fail every role check; a seeder with no call site; a bootstrap gap making the whole story unusable; a transition rule expressed as prose that permitted a customer to self-triage |
 | 07 | A guard that returned silently where its neighbour threw, for the same failure; a miscounted row in the plan's own data table; two edge cases citing the wrong guard after a renumber; a verification `grep` matching every type whose name merely starts with `Ticket` |
 
-**And one the review missed.** Story 08's implementation found an open redirect
-that had been live on `main` since story 06: the sign-in page read a `returnUrl`
-query parameter and navigated to it without checking it was same-site, so a link
-to `/signin?returnUrl=https://evil.example` would have sent a user to another
-host immediately after they typed their password — and the application would have
-appeared to send them. It is fixed in story 08, which accepts only a path
+**And four the review missed.** Story 08 found four defects that no plan
+described and no test could reach. Three had been live on `main`:
+
+| Defect | Live since | Found by |
+|---|---|---|
+| The sign-in page redirected anywhere a `returnUrl` said, including another host | story 06 | reading the file while implementing a related task |
+| The bearer token never reached the API, so nothing loaded in a browser at all | story 06 | opening the application |
+| Timestamps rendered in UTC, so a user at UTC+03 saw a fresh write as three hours old | story 05 | opening the application |
+| Both assignment buttons always shown, so clicking the matching one wrote an audit entry that changed nothing | story 08, caught before merge | opening the application |
+
+The first is the serious one: `/signin?returnUrl=https://evil.example` would have
+sent a user to another host immediately after they typed their password, and the
+application would have appeared to send them. It is fixed by accepting only a path
 beginning with a single `/`, rejecting the protocol-relative `//host` form that a
 naive relative-URL check misses.
 
-Worth stating plainly rather than burying: story 06's plan never mentioned
-`returnUrl`. The parameter was added during implementation as a reasonable piece
-of user experience, and the review that followed read the plan rather than the
-code. **Reviewing specifications cannot catch a defect in code the specification
-never described.** Six stories of specification review caught a great deal; the
-one security defect that reached `main` came through the gap beside it. The
-remedy is a code-reading pass on diffs that add behaviour no plan asked for, not
-more plan review.
+The second is the most telling. The client had never successfully called the API
+from a browser since authentication landed — `IHttpClientFactory` builds message
+handlers in their own dependency-injection scope, so the component that stored the
+token and the handler that should have attached it held different objects. Every
+request went out anonymous. Two stories were built, reviewed, and merged on top of
+an application that did not work, and 296 tests did not notice, because every one
+of them stubs the seam above the wiring.
+
+**What this says about the process.** Story 06's plan never mentioned `returnUrl`;
+the parameter was added during implementation as a reasonable piece of user
+experience, and the review that followed read the plan rather than the code.
+Reviewing a specification cannot catch a defect in code the specification never
+described, and a test suite that stubs every boundary cannot catch a system that
+is assembled wrongly. Both are real limits, not failures of effort: the same
+review caught two dozen defects before they were written, listed above.
+
+The remedy is two additions rather than more of the same. A code-reading pass over
+diffs that add behaviour no plan asked for. And an end-to-end test that starts the
+API and the client, signs in, and asserts the list loads — which would have caught
+the second and third rows in the table on the day they were written, and is
+tracked separately from the repository integration tests in #29, because they sit
+at a different layer and neither would have found these.
 
 Additionally, an error-contract design was changed after capturing a real API
 response: the planned three-field problem-details record would have shown users
