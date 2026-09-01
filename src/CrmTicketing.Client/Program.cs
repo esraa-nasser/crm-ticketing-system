@@ -20,7 +20,9 @@ builder.Services.AddHttpClient<SystemApiClient>(client =>
 // DI scope, so a scoped store would give BearerTokenHandler a different instance than
 // the sign-in page writes to: sign-in appears to succeed and every call still goes out
 // anonymous. In WebAssembly the app is one user in one session, so a singleton is the
-// correct lifetime regardless. ClientCompositionTests pins this.
+// correct lifetime regardless — but it would be wrong under Blazor Server, where one
+// process serves many users and a singleton token store would share one user's
+// credentials with everyone. ClientCompositionTests pins this.
 builder.Services.AddSingleton<TokenStore>();
 builder.Services.AddScoped<BearerTokenHandler>();
 
