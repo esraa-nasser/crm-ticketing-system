@@ -1,0 +1,151 @@
+@page "/tickets/new"
+@inject ITicketsApiClient TicketsApi
+@inject TicketMetadataProvider Metadata
+@inject TokenStore Tokens
+@inject NavigationManager Navigation
+
+<PageTitle>New ticket</PageTitle>
+
+<p><a href="tickets">&larr; Back to tickets</a></p>
+
+<h1>New ticket</h1>
+
+@if (!CanIdentifyRequester)
+{
+    <div class="alert alert-warning" role="alert">
+        <p class="mb-2">Your session could not be identified, so a ticket cannot be raised in your name.</p>
+        <a class="btn btn-sm btn-outline-secondary" href="signin?returnUrl=%2Ftickets%2Fnew">Sign in</a>
+    </div>
+}
+else
+{
+    @if (_error is not null)
+    {
+        <div class="alert alert-danger" role="alert">@_error</div>
+    }
+
+    @if (_metadata is null)
+    {
+        <div class="alert alert-secondary" role="alert">
+            The priority list could not be loaded, so a ticket cannot be raised yet.
+        </div>
+    }
+
+    <EditForm Model="_model" OnValidSubmit="Submit" FormName="create-ticket">
+        <div class="mb-2">
+            <label class="form-label" for="new-title">Title</label>
+            <InputText id="new-title" class="form-control" @bind-Value="_model.Title" />
+        </div>
+        <div class="mb-2">
+            <label class="form-label" for="new-description">Description</label>
+            <InputTextArea id="new-description" class="form-control" rows="4"
+                           @bind-Value="_model.Description" />
+        </div>
+        <div class="mb-2">
+            <label class="form-label" for="new-category">Category</label>
+            <InputText id="new-category" class="form-control" @bind-Value="_model.Category" />
+        </div>
+        <div class="mb-3">
+            <label class="form-label" for="new-priority">Priority</label>
+            <select id="new-priority" class="form-select" disabled="@(_metadata is null)"
+                    value="@_model.Priority" @onchange="OnPriorityChanged">
+                @foreach (var priority in _metadata?.Priorities ?? [])
+                {
+                    <option value="@priority">@priority</option>
+                }
+            </select>
+        </div>
+
+        @* No requester field. The requester is always the signed-in user, taken from
+           the sign-in response — never a form value a caller could set. *@
+        <button type="submit" class="btn btn-primary" disabled="@(_busy || _metadata is null)">
+            @(_busy ? "Creating…" : "Create ticket")
+        </button>
+    </EditForm>
+}
+
+@code {
+    private sealed class CreateModel
+    {
+        public string Title { get; set; } = string.Empty;
+
+        public string Description { get; set; } = string.Empty;
+
+        public string? Category { get; set; }
+
+        public string? Priority { get; set; }
+    }
+
+    private readonly CreateModel _model = new();
+    private TicketMetadataResponse? _metadata;
+    private string? _error;
+    private bool _busy;
+
+    // UserId is a non-nullable Guid under task 1, so "unknown" is Guid.Empty.
+    private bool CanIdentifyRequester => Tokens.IsSignedIn && Tokens.UserId != Guid.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!CanIdentifyRequester)
+        {
+            return;
+        }
+
+        try
+        {
+            _metadata = await Metadata.GetAsync();
+            _model.Priority = _metadata.Priorities.FirstOrDefault();
+        }
+        catch (Exception ex) when (ex is ApiRequestException or HttpRequestException or TaskCanceledException)
+        {
+            _metadata = null;
+        }
+    }
+
+    private async Task Submit()
+    {
+        // Refuse rather than send Guid.Empty. Story 06's Create forces a Customer's
+        // own id and ignores the body, but uses it for staff — so an empty id would
+        // appear to work for one role and return 400 for another.
+        if (!CanIdentifyRequester)
+        {
+            return;
+        }
+
+        _busy = true;
+        _error = null;
+
+        try
+        {
+            var created = await TicketsApi.CreateAsync(
+                new CreateTicketRequest(
+                    _model.Title,
+                    _model.Description,
+                    Tokens.UserId,
+                    _model.Priority,
+                    _model.Category),
+                CancellationToken.None);
+
+            Navigation.NavigateTo($"tickets/{created.Id}");
+        }
+        catch (Exception ex) when (ex is ApiRequestException or HttpRequestException or TaskCanceledException)
+        {
+            if (ex is ApiRequestException { StatusCode: 401 })
+            {
+                Navigation.NavigateTo("signin?returnUrl=%2Ftickets%2Fnew");
+                return;
+            }
+
+            // 400 already carries the validation message; 403 gets its own wording.
+            _error = ex is ApiRequestException { StatusCode: 403 }
+                ? "You do not have permission to do that."
+                : ex.Message;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void OnPriorityChanged(ChangeEventArgs args) => _model.Priority = args.Value as string;
+}

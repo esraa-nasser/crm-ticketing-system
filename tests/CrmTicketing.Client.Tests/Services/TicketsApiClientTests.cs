@@ -76,16 +76,25 @@ public sealed class TicketsApiClientTests
     {
         public Uri? LastRequestUri { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        public HttpMethod? LastMethod { get; private set; }
+
+        public string LastBody { get; private set; } = string.Empty;
+
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
             LastRequestUri = request.RequestUri;
+            LastMethod = request.Method;
 
-            return Task.FromResult(new HttpResponseMessage(statusCode)
+            LastBody = request.Content is null
+                ? string.Empty
+                : await request.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+
+            return new HttpResponseMessage(statusCode)
             {
                 Content = new StringContent(body, Encoding.UTF8, mediaType),
-            });
+            };
         }
     }
 
@@ -208,5 +217,97 @@ public sealed class TicketsApiClientTests
         Assert.Equal(2, metadata.Priorities.Count);
         Assert.Empty(metadata.Transitions["Open"]);
         Assert.Contains("api/tickets/metadata", handler.LastRequestUri!.ToString(), StringComparison.Ordinal);
+    }
+
+    // ---- Story 08: the write surface shares the read surface's error handling ----
+
+    private static readonly Guid TicketId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+
+    private const string SingleTicket = """
+        {
+          "id": "11111111-1111-1111-1111-111111111111",
+          "title": "Printer offline in Meeting Room 3",
+          "description": "Reported by reception.",
+          "status": "Open",
+          "priority": "High",
+          "category": "Hardware",
+          "requesterId": "aaaaaaaa-0000-0000-0000-000000000001",
+          "assigneeId": null,
+          "createdAt": "2026-09-01T09:00:00+00:00",
+          "updatedAt": "2026-09-01T09:00:00+00:00"
+        }
+        """;
+
+    [Fact]
+    public async Task Write_SurfacesTheValidationMessage()
+    {
+        // The same captured 400 the read path uses. If the writes had their own copy
+        // of the problem-details parsing, this is where the two would drift.
+        var (client, _) = CreateClient(HttpStatusCode.BadRequest, BadFilter400);
+
+        var ex = await Assert.ThrowsAsync<ApiRequestException>(
+            () => client.TransitionAsync(
+                TicketId,
+                new TransitionTicketRequest("Frozen"),
+                CancellationToken.None));
+
+        Assert.Equal("'Frozen' is not a recognised value.", ex.Message);
+        Assert.NotEqual("One or more validation errors occurred.", ex.Message);
+        Assert.Equal(400, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task Write_SurfacesTheConflictTitle()
+    {
+        var (client, _) = CreateClient(HttpStatusCode.Conflict, Conflict409);
+
+        var ex = await Assert.ThrowsAsync<ApiRequestException>(
+            () => client.TransitionAsync(
+                TicketId,
+                new TransitionTicketRequest("Open"),
+                CancellationToken.None));
+
+        Assert.Equal("The request conflicts with the current state of the ticket.", ex.Message);
+        Assert.Equal(409, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task AssignAsync_WithNull_UnassignsThroughTheSameRoute()
+    {
+        var (client, handler) = CreateClient(HttpStatusCode.OK, SingleTicket, "application/json");
+
+        await client.AssignAsync(TicketId, new AssignTicketRequest(null), CancellationToken.None);
+
+        // One route serves assign and unassign; null is the unassign signal.
+        Assert.Contains($"api/tickets/{TicketId}/assignee", handler.LastRequestUri!.ToString(), StringComparison.Ordinal);
+        Assert.Equal(HttpMethod.Post, handler.LastMethod);
+        Assert.Contains("\"assigneeId\":null", handler.LastBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_UsesPatch()
+    {
+        var (client, handler) = CreateClient(HttpStatusCode.OK, SingleTicket, "application/json");
+
+        await client.UpdateAsync(
+            TicketId,
+            new UpdateTicketRequest("New title", "New body", "Hardware", "High"),
+            CancellationToken.None);
+
+        Assert.Equal(HttpMethod.Patch, handler.LastMethod);
+        Assert.Contains($"api/tickets/{TicketId}", handler.LastRequestUri!.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetTicketAsync_DeserialisesASingleTicket()
+    {
+        var (client, handler) = CreateClient(HttpStatusCode.OK, SingleTicket, "application/json");
+
+        var ticket = await client.GetTicketAsync(TicketId, CancellationToken.None);
+
+        Assert.Equal(TicketId, ticket.Id);
+        Assert.Equal("Open", ticket.Status);
+        Assert.Equal("Reported by reception.", ticket.Description);
+        Assert.Equal(HttpMethod.Get, handler.LastMethod);
     }
 }

@@ -168,6 +168,12 @@ public sealed class AuthControllerTests
         Assert.False(string.IsNullOrWhiteSpace(response.AccessToken));
         Assert.Equal(KnownEmail, response.Email);
         Assert.Equal(RoleNames.Agent, Assert.Single(response.Roles));
+
+        // Carried explicitly so the client never reads it out of the token: the claim
+        // type is pinned in server configuration and a decoding client would break
+        // silently if it changed.
+        Assert.Equal(KnownUser().Id, response.UserId);
+        Assert.NotEqual(Guid.Empty, response.UserId);
         Assert.Equal(Now.AddMinutes(60), response.ExpiresAt);
     }
 

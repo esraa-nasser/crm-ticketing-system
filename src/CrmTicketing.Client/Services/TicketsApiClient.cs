@@ -51,11 +51,62 @@ public sealed class TicketsApiClient(HttpClient httpClient) : ITicketsApiClient
     public Task<TicketMetadataResponse> GetMetadataAsync(CancellationToken cancellationToken) =>
         GetAsync<TicketMetadataResponse>("api/tickets/metadata", cancellationToken);
 
-    private async Task<T> GetAsync<T>(string requestUri, CancellationToken cancellationToken)
+    public Task<TicketResponse> GetTicketAsync(Guid id, CancellationToken cancellationToken) =>
+        GetAsync<TicketResponse>($"api/tickets/{id}", cancellationToken);
+
+    public Task<TicketResponse> CreateAsync(
+        CreateTicketRequest request,
+        CancellationToken cancellationToken) =>
+        SendAsync<TicketResponse>(HttpMethod.Post, "api/tickets", request, cancellationToken);
+
+    public Task<TicketResponse> UpdateAsync(
+        Guid id,
+        UpdateTicketRequest request,
+        CancellationToken cancellationToken) =>
+        SendAsync<TicketResponse>(HttpMethod.Patch, $"api/tickets/{id}", request, cancellationToken);
+
+    public Task<TicketResponse> TransitionAsync(
+        Guid id,
+        TransitionTicketRequest request,
+        CancellationToken cancellationToken) =>
+        SendAsync<TicketResponse>(
+            HttpMethod.Post,
+            $"api/tickets/{id}/status",
+            request,
+            cancellationToken);
+
+    public Task<TicketResponse> AssignAsync(
+        Guid id,
+        AssignTicketRequest request,
+        CancellationToken cancellationToken) =>
+        SendAsync<TicketResponse>(
+            HttpMethod.Post,
+            $"api/tickets/{id}/assignee",
+            request,
+            cancellationToken);
+
+    private Task<T> GetAsync<T>(string requestUri, CancellationToken cancellationToken) =>
+        SendAsync<T>(new HttpRequestMessage(HttpMethod.Get, requestUri), cancellationToken);
+
+    private Task<T> SendAsync<T>(
+        HttpMethod method,
+        string requestUri,
+        object body,
+        CancellationToken cancellationToken) =>
+        SendAsync<T>(
+            new HttpRequestMessage(method, requestUri) { Content = JsonContent.Create(body, body.GetType()) },
+            cancellationToken);
+
+    /// <summary>
+    /// The one place a response is turned into either a value or an
+    /// <see cref="ApiRequestException"/>. Reads and writes share it so the
+    /// problem-details handling cannot drift between them.
+    /// </summary>
+    private async Task<T> SendAsync<T>(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         // HttpRequestException (the API is unreachable) propagates; the page catches
         // it. An unreachable host and a rejected request are different conditions.
-        var response = await httpClient.GetAsync(requestUri, cancellationToken).ConfigureAwait(false);
+        var response = await httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
 
         if (!response.IsSuccessStatusCode)
         {

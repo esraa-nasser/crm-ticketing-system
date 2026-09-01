@@ -15,14 +15,23 @@ public sealed class TokenStore
 
     public string? Email { get; private set; }
 
+    /// <summary>
+    /// The signed-in account's id, taken from the sign-in response. Never decoded
+    /// from the token: the claim type is pinned in server configuration, and reading
+    /// it here would break silently if that changed.
+    /// </summary>
+    /// <remarks><see cref="Guid.Empty"/> when nobody is signed in.</remarks>
+    public Guid UserId { get; private set; }
+
     public IReadOnlyList<string> Roles { get; private set; } = [];
 
     public bool IsSignedIn => !string.IsNullOrEmpty(AccessToken);
 
-    public void Set(string accessToken, string email, IReadOnlyList<string> roles)
+    public void Set(string accessToken, string email, Guid userId, IReadOnlyList<string> roles)
     {
         AccessToken = accessToken;
         Email = email;
+        UserId = userId;
         Roles = roles;
     }
 
@@ -30,6 +39,7 @@ public sealed class TokenStore
     {
         AccessToken = null;
         Email = null;
+        UserId = Guid.Empty;
         Roles = [];
     }
 }

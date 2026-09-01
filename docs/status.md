@@ -124,6 +124,24 @@ plans, before any code existed:
 | 06 | A foreign key that would turn a working request into a 500; JWT role claims that would silently fail every role check; a seeder with no call site; a bootstrap gap making the whole story unusable; a transition rule expressed as prose that permitted a customer to self-triage |
 | 07 | A guard that returned silently where its neighbour threw, for the same failure; a miscounted row in the plan's own data table; two edge cases citing the wrong guard after a renumber; a verification `grep` matching every type whose name merely starts with `Ticket` |
 
+**And one the review missed.** Story 08's implementation found an open redirect
+that had been live on `main` since story 06: the sign-in page read a `returnUrl`
+query parameter and navigated to it without checking it was same-site, so a link
+to `/signin?returnUrl=https://evil.example` would have sent a user to another
+host immediately after they typed their password — and the application would have
+appeared to send them. It is fixed in story 08, which accepts only a path
+beginning with a single `/`, rejecting the protocol-relative `//host` form that a
+naive relative-URL check misses.
+
+Worth stating plainly rather than burying: story 06's plan never mentioned
+`returnUrl`. The parameter was added during implementation as a reasonable piece
+of user experience, and the review that followed read the plan rather than the
+code. **Reviewing specifications cannot catch a defect in code the specification
+never described.** Six stories of specification review caught a great deal; the
+one security defect that reached `main` came through the gap beside it. The
+remedy is a code-reading pass on diffs that add behaviour no plan asked for, not
+more plan review.
+
 Additionally, an error-contract design was changed after capturing a real API
 response: the planned three-field problem-details record would have shown users
 "One or more validation errors occurred." instead of the actual validation
@@ -195,6 +213,12 @@ log into.
   there is no integration-test host. Same root cause as #29.
 - Row ordering in the list is unverified. It appears newest-first and is
   consistent with the query, but no test asserts it, so no UI copy claims it.
+- **Last write wins on a ticket, silently.** There is no ETag, no version column,
+  and no optimistic concurrency. Two agents editing the same ticket overwrite each
+  other, and because every write re-reads from the server, the loser sees the
+  winner's values without being told a collision happened. Accepted deliberately
+  rather than half-built: a fix needs a version field on the aggregate, which is a
+  domain change and a migration, and belongs in its own story.
 
 ---
 

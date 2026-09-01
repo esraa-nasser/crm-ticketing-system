@@ -49,6 +49,23 @@ public sealed class TicketsTests : BunitContext
             MetadataException is not null
                 ? Task.FromException<TicketMetadataResponse>(MetadataException)
                 : Task.FromResult(Metadata);
+
+        // This class tests the list page, which performs no writes. Throwing rather
+        // than returning a default makes an accidental call visible.
+        public Task<TicketResponse> GetTicketAsync(Guid id, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<TicketResponse> CreateAsync(CreateTicketRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<TicketResponse> UpdateAsync(Guid id, UpdateTicketRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<TicketResponse> TransitionAsync(Guid id, TransitionTicketRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<TicketResponse> AssignAsync(Guid id, AssignTicketRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private static TicketSummaryResponse Ticket(

@@ -8,6 +8,8 @@
 
 <h1>Tickets</h1>
 
+<p><a class="btn btn-sm btn-primary" href="tickets/new">New ticket</a></p>
+
 <div class="row g-2 align-items-end mb-3">
     <div class="col-auto">
         <label class="form-label" for="status-filter">Status</label>
@@ -79,7 +81,7 @@ else
             @foreach (var ticket in _result.Items)
             {
                 <tr>
-                    <td>@ticket.Title</td>
+                    <td><a href="@DetailUri(ticket.Id)">@ticket.Title</a></td>
                     <td>@ticket.Status</td>
                     <td>@ticket.Priority</td>
                     <td>@(ticket.Category ?? "—")</td>
@@ -249,6 +251,18 @@ else
             ["priority"] = string.IsNullOrEmpty(priority) ? null : priority,
             ["page"] = page <= 1 ? null : page,
         }));
+
+    // Carries the current filter and page into the detail view, so its back-link can
+    // return the user to exactly the list they left.
+    private string DetailUri(Guid id) =>
+        Navigation.GetUriWithQueryParameters(
+            Navigation.ToAbsoluteUri($"tickets/{id}").ToString(),
+            new Dictionary<string, object?>
+            {
+                ["status"] = string.IsNullOrEmpty(Status) ? null : Status,
+                ["priority"] = string.IsNullOrEmpty(Priority) ? null : Priority,
+                ["page"] = Page is > 1 ? Page : null,
+            });
 
     private static string FormatAssignee(Guid? assigneeId) =>
         assigneeId is { } id ? id.ToString()[..8] : "Unassigned";
