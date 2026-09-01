@@ -308,6 +308,8 @@ public sealed class TicketDetailTests : BunitContext
     public void Unassign_SendsNull()
     {
         var stub = Arrange();
+        // Unassign is only offered for a ticket assigned to the caller.
+        stub.Reads[0] = Ticket(assigneeId: UserId);
 
         var page = RenderDetail();
         page.FindAll("button").Single(b => b.TextContent.Trim() == "Unassign").Click();
@@ -318,13 +320,16 @@ public sealed class TicketDetailTests : BunitContext
     }
 
     [Fact]
-    public void AssignToMe_IsDisabledWhenTheUserIdIsUnknown()
+    public void NeitherAssignmentActionIsOfferedWhenTheUserIdIsUnknown()
     {
         Arrange(signedIn: false);
 
-        var button = RenderDetail().FindAll("button").Single(b => b.TextContent.Trim() == "Assign to me");
+        var labels = RenderDetail().FindAll("button").Select(b => b.TextContent.Trim()).ToList();
 
-        Assert.True(button.HasAttribute("disabled"));
+        // Without a known user id, neither action can be built: "Assign to me" has no
+        // id to send, and "Unassign" cannot know whether the ticket is the caller's.
+        Assert.DoesNotContain("Assign to me", labels);
+        Assert.DoesNotContain("Unassign", labels);
     }
 
     [Fact]
@@ -338,5 +343,68 @@ public sealed class TicketDetailTests : BunitContext
         // The ticket renders; only the transitions are unavailable.
         Assert.Contains("Printer offline in Meeting Room 3", page.Markup, StringComparison.Ordinal);
         Assert.Contains("No further moves", page.Markup, StringComparison.Ordinal);
+    }
+
+    // ---- Defects found in manual verification ----
+
+    private static IReadOnlyList<string> ButtonLabels(IRenderedComponent<TicketDetail> page) =>
+        [.. page.FindAll("button").Select(b => b.TextContent.Trim())];
+
+    [Fact]
+    public void AssignToMe_IsNotOfferedWhenTheTicketIsAlreadyMine()
+    {
+        var stub = Arrange();
+        stub.Reads[0] = Ticket(assigneeId: UserId);
+
+        var page = RenderDetail();
+
+        // Offering it would let a click write the same assignee back, advancing
+        // UpdatedAt and UpdatedBy for no change.
+        Assert.DoesNotContain("Assign to me", ButtonLabels(page));
+        Assert.Contains("Unassign", ButtonLabels(page));
+    }
+
+    [Fact]
+    public void Unassign_IsNotOfferedWhenTheTicketIsUnassigned()
+    {
+        var stub = Arrange();
+        stub.Reads[0] = Ticket(assigneeId: null);
+
+        var page = RenderDetail();
+
+        Assert.Contains("Assign to me", ButtonLabels(page));
+        Assert.DoesNotContain("Unassign", ButtonLabels(page));
+    }
+
+    [Fact]
+    public void AssignedToSomeoneElse_OffersOnlyTakingIt()
+    {
+        var stub = Arrange();
+        stub.Reads[0] = Ticket(assigneeId: Guid.Parse("bbbbbbbb-0000-0000-0000-000000000002"));
+
+        var page = RenderDetail();
+
+        // Assignment is self-service: an agent may take it, but clearing someone
+        // else's assignment is not an action this screen offers.
+        Assert.Contains("Assign to me", ButtonLabels(page));
+        Assert.DoesNotContain("Unassign", ButtonLabels(page));
+    }
+
+    [Fact]
+    public void Timestamps_RenderInLocalTimeNotRawUtc()
+    {
+        var stub = Arrange();
+        // Deliberately not midnight UTC: a value whose local rendering differs from
+        // its UTC one wherever the test happens to run.
+        var created = new DateTimeOffset(2026, 9, 1, 13, 45, 0, TimeSpan.Zero);
+        stub.Reads[0] = Ticket() with { CreatedAt = created, UpdatedAt = created };
+
+        var markup = RenderDetail().Markup;
+
+        // The raw round-trip form carries a "Z"; the rendered form must not be it.
+        // This holds even on a UTC machine, where the two instants coincide but the
+        // formats still differ.
+        Assert.DoesNotContain(created.ToString("u"), markup, StringComparison.Ordinal);
+        Assert.Contains(DisplayTime.Local(created), markup, StringComparison.Ordinal);
     }
 }

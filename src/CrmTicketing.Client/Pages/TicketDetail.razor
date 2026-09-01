@@ -53,10 +53,10 @@ else
         <dd class="col-sm-9">@(_ticket.AssigneeId?.ToString() ?? "Unassigned")</dd>
 
         <dt class="col-sm-3">Created</dt>
-        <dd class="col-sm-9">@_ticket.CreatedAt.ToString("u")</dd>
+        <dd class="col-sm-9">@DisplayTime.Local(_ticket.CreatedAt)</dd>
 
         <dt class="col-sm-3">Updated</dt>
-        <dd class="col-sm-9">@_ticket.UpdatedAt.ToString("u")</dd>
+        <dd class="col-sm-9">@DisplayTime.Local(_ticket.UpdatedAt)</dd>
 
         <dt class="col-sm-3">Description</dt>
         <dd class="col-sm-9" style="white-space: pre-wrap">@_ticket.Description</dd>
@@ -83,14 +83,28 @@ else
 
     <h2 class="h5">Assignment</h2>
     <div class="d-flex gap-2 mb-3">
-        <button type="button" class="btn btn-sm btn-outline-primary"
-                disabled="@(_busy || !CanAssignToMe)" @onclick="AssignToMe">
-            Assign to me
-        </button>
-        <button type="button" class="btn btn-sm btn-outline-secondary"
-                disabled="@_busy" @onclick="Unassign">
-            Unassign
-        </button>
+        @* Only the action that would change something is offered. Each button was
+           previously shown unconditionally, so clicking one that matched the current
+           state wrote the same value back and advanced UpdatedAt and UpdatedBy for no
+           change — an edit in the audit trail that never edited anything. *@
+        @if (ShowAssignToMe)
+        {
+            <button type="button" class="btn btn-sm btn-outline-primary"
+                    disabled="@_busy" @onclick="AssignToMe">
+                Assign to me
+            </button>
+        }
+        @if (ShowUnassign)
+        {
+            <button type="button" class="btn btn-sm btn-outline-secondary"
+                    disabled="@_busy" @onclick="Unassign">
+                Unassign
+            </button>
+        }
+        @if (!ShowAssignToMe && !ShowUnassign)
+        {
+            <span class="text-muted small">Assigned to someone else.</span>
+        }
     </div>
 
     <h2 class="h5">Edit</h2>
@@ -163,6 +177,18 @@ else
             : [];
 
     private bool CanAssignToMe => Tokens.IsSignedIn && Tokens.UserId != Guid.Empty;
+
+    /// <summary>Offered only when it would change the assignee.</summary>
+    private bool ShowAssignToMe =>
+        CanAssignToMe && _ticket is not null && _ticket.AssigneeId != Tokens.UserId;
+
+    /// <summary>
+    /// Offered only when the ticket is assigned to the caller. Assignment is
+    /// self-service — there is no picker — so clearing someone else's assignment is
+    /// not an action this screen offers; taking it with "Assign to me" is.
+    /// </summary>
+    private bool ShowUnassign =>
+        CanAssignToMe && _ticket is not null && _ticket.AssigneeId == Tokens.UserId;
 
     protected override async Task OnParametersSetAsync()
     {

@@ -86,7 +86,7 @@ else
                     <td>@ticket.Priority</td>
                     <td>@(ticket.Category ?? "—")</td>
                     <td>@FormatAssignee(ticket.AssigneeId)</td>
-                    <td>@ticket.CreatedAt.ToString("u")</td>
+                    <td>@DisplayTime.Local(ticket.CreatedAt)</td>
                 </tr>
             }
         </tbody>
