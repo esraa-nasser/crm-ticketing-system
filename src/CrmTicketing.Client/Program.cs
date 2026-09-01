@@ -16,7 +16,12 @@ var apiBaseAddress = builder.Configuration["Api:BaseAddress"]
 
 builder.Services.AddHttpClient<SystemApiClient>(client =>
     client.BaseAddress = new Uri(apiBaseAddress));
-builder.Services.AddScoped<TokenStore>();
+// Singleton, not scoped. IHttpClientFactory resolves message handlers from its own
+// DI scope, so a scoped store would give BearerTokenHandler a different instance than
+// the sign-in page writes to: sign-in appears to succeed and every call still goes out
+// anonymous. In WebAssembly the app is one user in one session, so a singleton is the
+// correct lifetime regardless. ClientCompositionTests pins this.
+builder.Services.AddSingleton<TokenStore>();
 builder.Services.AddScoped<BearerTokenHandler>();
 
 // Signing in is how the token is obtained, so AuthApiClient carries no handler.
