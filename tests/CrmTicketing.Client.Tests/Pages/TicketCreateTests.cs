@@ -78,6 +78,18 @@ public sealed class TicketCreateTests : BunitContext
             AssignTicketRequest request,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<PagedResponse<TicketCommentResponse>> GetCommentsAsync(
+            Guid ticketId,
+            int page,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException("The create form has no thread - a ticket has no comments until it exists.");
+
+        public Task<TicketCommentResponse> AddCommentAsync(
+            Guid ticketId,
+            CreateCommentRequest request,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private StubTicketsApiClient Arrange(bool signedIn = true)
@@ -87,7 +99,7 @@ public sealed class TicketCreateTests : BunitContext
 
         if (signedIn)
         {
-            tokens.Set("a-token", "agent@example.com", UserId, ["Agent"]);
+            tokens.Set("a-token", "agent@example.com", UserId, ["Agent"], isStaff: true);
         }
 
         Services.AddSingleton<ITicketsApiClient>(stub);

@@ -33,6 +33,14 @@ internal static class TicketMapper
         CreatedAt: ticket.CreatedAt,
         UpdatedAt: ticket.UpdatedAt);
 
+    public static TicketCommentResponse ToResponse(TicketComment comment) => new(
+        Id: comment.Id,
+        TicketId: comment.TicketId,
+        AuthorId: comment.AuthorId,
+        Body: comment.Body,
+        IsInternal: comment.IsInternal,
+        CreatedAt: comment.CreatedAt);
+
     public static bool TryParseStatus(string? value, out TicketStatus status) =>
         TryParseName(value, out status);
 

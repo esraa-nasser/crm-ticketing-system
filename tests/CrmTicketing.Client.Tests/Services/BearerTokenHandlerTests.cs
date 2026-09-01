@@ -30,7 +30,7 @@ public sealed class BearerTokenHandlerTests
     public async Task AttachesTheStoredToken()
     {
         var tokens = new TokenStore();
-        tokens.Set("a-token", "agent@example.com", Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001"), ["Agent"]);
+        tokens.Set("a-token", "agent@example.com", Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001"), ["Agent"], isStaff: true);
         var (client, inner) = CreateClient(tokens);
 
         await client.GetAsync(new Uri("api/tickets", UriKind.Relative));
@@ -57,7 +57,7 @@ public sealed class BearerTokenHandlerTests
     public async Task StopsSendingTheTokenAfterClear()
     {
         var tokens = new TokenStore();
-        tokens.Set("a-token", "agent@example.com", Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001"), ["Agent"]);
+        tokens.Set("a-token", "agent@example.com", Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001"), ["Agent"], isStaff: true);
         var (client, inner) = CreateClient(tokens);
 
         await client.GetAsync(new Uri("api/tickets", UriKind.Relative));
@@ -75,7 +75,7 @@ public sealed class BearerTokenHandlerTests
         var tokens = new TokenStore();
         Assert.False(tokens.IsSignedIn);
 
-        tokens.Set("a-token", "agent@example.com", Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001"), ["Agent"]);
+        tokens.Set("a-token", "agent@example.com", Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001"), ["Agent"], isStaff: true);
         Assert.True(tokens.IsSignedIn);
         Assert.Equal("agent@example.com", tokens.Email);
 

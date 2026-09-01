@@ -39,6 +39,7 @@ public static class DependencyInjection
 
         services.AddDbContext<CrmDbContext>(options => options.UseNpgsql(connectionString));
         services.AddScoped<ITicketRepository, TicketRepository>();
+        services.AddScoped<ITicketCommentRepository, TicketCommentRepository>();
 
         // AddIdentityCore, not AddIdentity: the latter wires cookie authentication,
         // which this API does not use and which would add a second scheme nobody

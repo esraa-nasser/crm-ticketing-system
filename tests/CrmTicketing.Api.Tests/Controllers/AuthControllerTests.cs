@@ -67,7 +67,7 @@ public sealed class AuthControllerTests
 
     // No real password hashing: Identity's hasher is deliberately slow, and a suite
     // that pays that cost per test stops being run.
-    private sealed class StubUserManager(ApplicationUser? user, bool passwordMatches)
+    private sealed class StubUserManager(ApplicationUser? user, bool passwordMatches, string[]? roles = null)
         : UserManager<ApplicationUser>(
             new UnusedUserStore(),
             null!,
@@ -85,7 +85,7 @@ public sealed class AuthControllerTests
             Task.FromResult(passwordMatches);
 
         public override Task<IList<string>> GetRolesAsync(ApplicationUser candidate) =>
-            Task.FromResult<IList<string>>([RoleNames.Agent]);
+            Task.FromResult<IList<string>>(roles ?? [RoleNames.Agent]);
     }
 
     private sealed class TestProblemDetailsFactory : ProblemDetailsFactory
@@ -118,8 +118,11 @@ public sealed class AuthControllerTests
         LifetimeMinutes = 60,
     };
 
-    private static AuthController CreateController(ApplicationUser? user, bool passwordMatches) =>
-        new(new StubUserManager(user, passwordMatches), Options(), new FixedTimeProvider(Now))
+    private static AuthController CreateController(
+        ApplicationUser? user,
+        bool passwordMatches,
+        string[]? roles = null) =>
+        new(new StubUserManager(user, passwordMatches, roles), Options(), new FixedTimeProvider(Now))
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
             ProblemDetailsFactory = new TestProblemDetailsFactory(),
@@ -175,6 +178,42 @@ public sealed class AuthControllerTests
         Assert.Equal(KnownUser().Id, response.UserId);
         Assert.NotEqual(Guid.Empty, response.UserId);
         Assert.Equal(Now.AddMinutes(60), response.ExpiresAt);
+    }
+
+    [Theory]
+    [InlineData(RoleNames.Admin, true)]
+    [InlineData(RoleNames.Agent, true)]
+    [InlineData(RoleNames.Customer, false)]
+    public async Task SignIn_ReportsWhetherTheAccountIsStaff(string role, bool expected)
+    {
+        // The server's own answer, so the client never has to know which role names
+        // count as staff - a grouping it cannot reach without an edge the layer graph
+        // forbids. A display hint only; the API still enforces.
+        var controller = CreateController(KnownUser(), passwordMatches: true, roles: [role]);
+
+        var result = await controller.SignIn(
+            new SignInRequest(KnownEmail, CorrectPassword),
+            CancellationToken.None);
+
+        var response = Assert.IsType<SignInResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+
+        Assert.Equal(expected, response.IsStaff);
+    }
+
+    [Fact]
+    public async Task SignIn_WithNoRoles_IsNotStaff()
+    {
+        // The safer default when a role is missing: less capability, not more.
+        var controller = CreateController(KnownUser(), passwordMatches: true, roles: []);
+
+        var result = await controller.SignIn(
+            new SignInRequest(KnownEmail, CorrectPassword),
+            CancellationToken.None);
+
+        var response = Assert.IsType<SignInResponse>(Assert.IsType<OkObjectResult>(result.Result).Value);
+
+        Assert.False(response.IsStaff);
+        Assert.Empty(response.Roles);
     }
 
     [Fact]

@@ -98,7 +98,8 @@ public sealed class ClientCompositionTests
             "a-token",
             "agent@example.com",
             Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001"),
-            ["Agent"]);
+            ["Agent"],
+            isStaff: true);
 
         var chain = provider
             .GetRequiredService<IHttpMessageHandlerFactory>()

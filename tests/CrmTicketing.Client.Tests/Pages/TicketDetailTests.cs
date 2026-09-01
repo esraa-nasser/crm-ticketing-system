@@ -94,6 +94,23 @@ public sealed class TicketDetailTests : BunitContext
             CancellationToken cancellationToken) =>
             throw new NotSupportedException("The detail view never lists.");
 
+        /// <summary>
+        /// The detail view embeds the comment thread, so every render of this page calls
+        /// here. An empty page keeps these tests about the ticket; the thread has its own
+        /// file.
+        /// </summary>
+        public Task<PagedResponse<TicketCommentResponse>> GetCommentsAsync(
+            Guid ticketId,
+            int page,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new PagedResponse<TicketCommentResponse>([], Page: 1, PageSize: 25, TotalCount: 0));
+
+        public Task<TicketCommentResponse> AddCommentAsync(
+            Guid ticketId,
+            CreateCommentRequest request,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException("Posting is exercised in TicketCommentsTests.");
+
         private Task<TicketResponse> Record(string kind, string? payload)
         {
             Writes.Add(new WriteCall(kind, payload));
@@ -134,7 +151,7 @@ public sealed class TicketDetailTests : BunitContext
 
         if (signedIn)
         {
-            tokens.Set("a-token", "agent@example.com", UserId, ["Agent"]);
+            tokens.Set("a-token", "agent@example.com", UserId, ["Agent"], isStaff: true);
         }
 
         Services.AddSingleton<ITicketsApiClient>(stub);
@@ -406,5 +423,19 @@ public sealed class TicketDetailTests : BunitContext
         // formats still differ.
         Assert.DoesNotContain(created.ToString("u"), markup, StringComparison.Ordinal);
         Assert.Contains(DisplayTime.Local(created), markup, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Detail_RendersTheCommentsSection()
+    {
+        // The thread is a child component with its own tests; this asserts only that
+        // the page hosts it. The stub returns an empty page, so the empty state is what
+        // renders.
+        Arrange();
+
+        var page = RenderDetail();
+
+        Assert.Contains("Comments", page.Markup, StringComparison.Ordinal);
+        Assert.Single(page.FindAll("[data-testid=comments-empty]"));
     }
 }

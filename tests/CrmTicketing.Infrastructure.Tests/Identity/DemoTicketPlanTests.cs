@@ -155,4 +155,77 @@ public sealed class DemoTicketPlanTests
 
         Assert.Equal(titles.Count, titles.Distinct(StringComparer.Ordinal).Count());
     }
+
+    // ---- Story 09: the demo thread ----
+
+    private static IReadOnlyList<DemoCommentSpecification> CommentSpecifications =>
+        DemoDataSeeder.CommentSpecifications;
+
+    [Fact]
+    public void DemoComments_ReferenceRealTicketsAndNeverAClosedOne()
+    {
+        // The seeder now asks the aggregate before each write, so a closed target
+        // throws at startup rather than seeding quietly. This keeps the failure in a
+        // suite that runs in milliseconds, and names the offending row.
+        foreach (var comment in CommentSpecifications)
+        {
+            Assert.InRange(comment.TicketIndex, 0, Specifications.Count - 1);
+
+            var ticket = Specifications[comment.TicketIndex];
+
+            Assert.True(
+                ticket.TargetStatus != TicketStatus.Closed,
+                $"'{ticket.Title}' is Closed and cannot be commented on.");
+        }
+    }
+
+    [Fact]
+    public void DemoComments_IncludeAnInternalCommentOnACustomerVisibleTicket()
+    {
+        // Without this the visibility rule is invisible in a demo: both users would see
+        // the same thread, and the feature would look like it does nothing.
+        var internalOnCustomerTicket = CommentSpecifications.Any(c =>
+            c.IsInternal && Specifications[c.TicketIndex].Requester == DemoRequester.Customer);
+
+        Assert.True(internalOnCustomerTicket);
+    }
+
+    [Fact]
+    public void DemoComments_IncludeAPublicExchangeBetweenBothParties()
+    {
+        // The core support loop: the requester writes and an agent replies, in public.
+        var exchange = CommentSpecifications
+            .Where(c => !c.IsInternal)
+            .GroupBy(c => c.TicketIndex)
+            .Any(g => g.Any(c => c.Author == DemoRequester.Customer)
+                && g.Any(c => c.Author == DemoRequester.Agent));
+
+        Assert.True(exchange);
+    }
+
+    [Fact]
+    public void DemoComments_LeaveSomeTicketsEmpty()
+    {
+        // The empty state has to be reachable from the demo, and a thread on every
+        // ticket looks like test data rather than a support queue.
+        var commented = CommentSpecifications.Select(c => c.TicketIndex).Distinct().Count();
+
+        Assert.True(commented < Specifications.Count);
+    }
+
+    [Fact]
+    public void DemoComments_AreWrittenAfterTheirTicketExists()
+    {
+        // A negative offset would date a comment before the ticket it is on.
+        Assert.All(CommentSpecifications, c => Assert.True(c.HoursAfterTicket >= 0));
+    }
+
+    [Fact]
+    public void DemoComments_HaveBodiesTheAggregateAccepts()
+    {
+        // Construction is what the seeder does; doing it here means a body that would
+        // throw at startup fails in this suite instead.
+        Assert.All(CommentSpecifications, c => Assert.False(string.IsNullOrWhiteSpace(c.Body)));
+        Assert.All(CommentSpecifications, c => Assert.True(c.Body.Trim().Length <= TicketComment.MaxBodyLength));
+    }
 }

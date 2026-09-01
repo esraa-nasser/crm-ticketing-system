@@ -35,8 +35,8 @@ internal static partial class DemoDataSeeder
 
     [LoggerMessage(
         Level = LogLevel.Information,
-        Message = "Demo seeding created {Users} users and {Tickets} tickets.")]
-    private static partial void LogSeeded(ILogger logger, int users, int tickets);
+        Message = "Demo seeding created {Users} users, {Tickets} tickets, and {Comments} comments.")]
+    private static partial void LogSeeded(ILogger logger, int users, int tickets, int comments);
 
     private const string DemoSection = "Seed:Demo";
     private const string BootstrapAdminSection = "Identity:BootstrapAdmin";
@@ -135,7 +135,7 @@ internal static partial class DemoDataSeeder
         await SeedTicketsAsync(services, repository, agent.Id, customer.Id, cancellationToken)
             .ConfigureAwait(false);
 
-        LogSeeded(logger, DemoUserCount, Specifications.Count);
+        LogSeeded(logger, DemoUserCount, Specifications.Count, CommentSpecifications.Count);
     }
 
     /// <summary>
@@ -156,6 +156,45 @@ internal static partial class DemoDataSeeder
         new("Ticket list slow to load in the morning", "Raised by support after several reports.", "Internal", TicketPriority.High, DemoRequester.Agent, TicketStatus.Open, true, 7),
         new("Stale entries in the status filter", "Fixed by clearing the cached metadata response.", "Internal", TicketPriority.Normal, DemoRequester.Agent, TicketStatus.Resolved, false, 9),
         new("Review the demo dataset", "Completed - the seeded set now covers every status.", "Internal", TicketPriority.Urgent, DemoRequester.Agent, TicketStatus.Closed, false, 12),
+    ];
+
+    /// <summary>
+    /// The demo thread, declared rather than constructed. Internal and pure so its
+    /// shape can be asserted without a database.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately uneven. Some tickets carry a conversation, some carry one note, and
+    /// several carry nothing - a demo where every ticket has the same thread shows the
+    /// feature without showing what it looks like in use, and never reaches the empty
+    /// state. No comment targets a closed ticket: the API refuses one, so seeding it
+    /// would put the database in a state the running system cannot produce.
+    /// </remarks>
+    internal static IReadOnlyList<DemoCommentSpecification> CommentSpecifications { get; } =
+    [
+        // A customer conversation with an internal note the customer never sees. This
+        // one ticket is what makes the visibility rule visible in a demo: sign in as
+        // each user and the thread differs.
+        new(2, DemoRequester.Customer, "I tried a different socket and it still will not charge.", false, 2),
+        new(2, DemoRequester.Agent, "Thanks - I have ordered a replacement charger for you.", false, 5),
+        new(2, DemoRequester.Agent, "Charger stock is low; using the last spare from the cupboard.", true, 6),
+
+        // The core loop, with nothing hidden: requester writes, agent replies.
+        new(3, DemoRequester.Customer, "The duplicate line is the second one, dated the 14th.", false, 3),
+        new(3, DemoRequester.Agent, "Confirmed with finance - a credit note is on its way.", false, 8),
+
+        // A second internal comment, on a Pending ticket, so the rule is not carried by
+        // a single row.
+        new(5, DemoRequester.Agent, "We are waiting on finance to confirm the new address.", false, 4),
+        new(5, DemoRequester.Agent, "Finance have not replied in two days; chasing again on Monday.", true, 30),
+
+        new(6, DemoRequester.Agent, "Could you confirm whether the cable is HDMI or DisplayPort?", false, 6),
+
+        new(7, DemoRequester.Customer, "The new password works, thank you.", false, 20),
+        new(7, DemoRequester.Agent, "Glad to hear it - marking this resolved.", false, 22),
+
+        // On an agent-raised ticket, so an internal comment exists that no customer can
+        // reach by any route.
+        new(9, DemoRequester.Agent, "Reproduced on the staging box at 09:00 with a warm cache.", true, 9),
     ];
 
     /// <summary>
@@ -226,6 +265,10 @@ internal static partial class DemoDataSeeder
         // window the list view or a future SLA cares about.
         var now = services.GetRequiredService<TimeProvider>().GetUtcNow();
 
+        // Kept in specification order so DemoCommentSpecification.TicketIndex resolves
+        // to the ticket it names.
+        var seeded = new List<Ticket>(Specifications.Count);
+
         foreach (var spec in Specifications)
         {
             var requesterId = spec.Requester == DemoRequester.Agent ? agentId : customerId;
@@ -263,6 +306,53 @@ internal static partial class DemoDataSeeder
             }
 
             await repository.AddAsync(ticket, cancellationToken).ConfigureAwait(false);
+            seeded.Add(ticket);
+        }
+
+        await repository.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+        // After the tickets are committed: ticket_comment.ticket_id carries a foreign
+        // key, so a comment inserted in the same batch could reach the database first.
+        await SeedCommentsAsync(services, seeded, agentId, customerId, now, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private static async Task SeedCommentsAsync(
+        IServiceProvider services,
+        List<Ticket> seeded,
+        Guid agentId,
+        Guid customerId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var repository = services.GetRequiredService<ITicketCommentRepository>();
+
+        foreach (var spec in CommentSpecifications)
+        {
+            var ticket = seeded[spec.TicketIndex];
+
+            // Asked, not assumed. The seeder holds the ticket, so it can put the same
+            // question to the domain that the API does - rather than relying on the
+            // specification list being right about which tickets are closed. A demo set
+            // that quietly seeds a comment the running system would refuse is a
+            // database in a state the application cannot produce, and this throws
+            // instead.
+            ticket.EnsureCanBeCommentedOn();
+
+            var createdAt = now.AddDays(-Specifications[spec.TicketIndex].AgeInDays);
+            var authorId = spec.Author == DemoRequester.Agent ? agentId : customerId;
+
+            // Built through the aggregate, never an object initialiser or INSERT, so a
+            // seeded comment cannot exist in a state TicketComment forbids.
+            var comment = TicketComment.Write(
+                Guid.CreateVersion7(),
+                ticket.Id,
+                authorId,
+                spec.Body,
+                spec.IsInternal,
+                createdAt.AddHours(spec.HoursAfterTicket));
+
+            await repository.AddAsync(comment, cancellationToken).ConfigureAwait(false);
         }
 
         await repository.SaveChangesAsync(cancellationToken).ConfigureAwait(false);

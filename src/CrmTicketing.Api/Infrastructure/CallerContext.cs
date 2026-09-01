@@ -55,4 +55,19 @@ internal static class CallerContext
 
         return principal.IsInRole(RoleNames.Admin) || principal.IsInRole(RoleNames.Agent);
     }
+
+    /// <summary>
+    /// Which comments this caller may see. The counterpart to <see cref="Access"/>:
+    /// that one confines which tickets, this one confines which comments on them.
+    /// </summary>
+    /// <remarks>
+    /// Built on <see cref="IsStaff"/> rather than on a fresh role check, so there stays
+    /// exactly one declaration of what staff means. Anyone holding no known role sees
+    /// public comments only - the same "less visibility, not more" default
+    /// <see cref="Access"/> takes.
+    /// </remarks>
+    public static CommentVisibility CommentVisibility(this ClaimsPrincipal principal) =>
+        principal.IsStaff()
+            ? Domain.Tickets.CommentVisibility.All()
+            : Domain.Tickets.CommentVisibility.PublicOnly();
 }

@@ -41,6 +41,6 @@ Entry point for the **ticketing-core** feature. Stories execute in order by thei
 | #4 — seed data | Needs a table with columns to seed (unblocked by story 03) |
 | #21 — SLA policies | Needs `CreatedAt`, `Status`, and `Priority` to compute against (unblocked by story 03) |
 | #11 — comments | Needs the ticket HTTP surface from story 04, and an actor from story 06 (planned as story 09) |
-| #11 — activity timeline | Split out of #11 by story 09 into its own issue; needs a stored event history, not authored text |
+| #47 — activity timeline | Split out of #11 by story 09; needs a stored event history, not authored text |
 | #12–#14 — ticket UI | Needs the contracts and the metadata endpoint from story 04 |
 | #16 — permission-gated endpoints | Needs routes to gate, from story 04 |

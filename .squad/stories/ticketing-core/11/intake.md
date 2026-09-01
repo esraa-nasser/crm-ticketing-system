@@ -104,7 +104,7 @@ None.
 
 ## Dependencies
 
-- **Blocked by / related ids:** #8, #9, #10, #12, #13 (merged), #5 and #6 (merged — a comment needs an author). Closes the comments half of #11. **Open a separate issue for the activity timeline** and note it here once numbered.
+- **Blocked by / related ids:** #8, #9, #10, #12, #13 (merged), #5 and #6 (merged — a comment needs an author). Closes the comments half of #11. The activity timeline was split into **#47** and is not in this story.
 - **Depends on code areas or other stories:** `Ticket`, `TicketAccess`, `ITicketRepository`, `CallerContext`, `TicketDetail.razor`, `DisplayTime`, `ITicketsApiClient`.
 
 ## Extra notes

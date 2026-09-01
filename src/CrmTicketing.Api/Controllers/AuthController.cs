@@ -74,7 +74,10 @@ public sealed class AuthController(
             ExpiresAt: expiresAt,
             Email: user.Email ?? string.Empty,
             UserId: user.Id,
-            Roles: [.. roles]));
+            Roles: [.. roles],
+            // From RoleNames, never a literal, and the same two roles CallerContext
+            // treats as staff. A display hint for the client; the API still enforces.
+            IsStaff: roles.Contains(RoleNames.Admin) || roles.Contains(RoleNames.Agent)));
     }
 
     /// <summary>Creates an account in a role. The only way an account comes to exist.</summary>

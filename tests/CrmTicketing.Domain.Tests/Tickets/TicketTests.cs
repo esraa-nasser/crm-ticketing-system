@@ -429,4 +429,60 @@ public sealed class TicketTests
         Assert.NotEqual(ticket.CreatedBy, ticket.UpdatedBy);
         Assert.False(string.IsNullOrEmpty(mutator));
     }
+
+    // ---- Story 09: the rule about comments, which lives here rather than on TicketComment ----
+
+    [Fact]
+    public void EnsureCanBeCommentedOn_ThrowsOnAClosedTicket()
+    {
+        var ticket = TicketInStatus(TicketStatus.Closed);
+
+        // Exact type, never ThrowsAny: a revert to a plain InvalidOperationException
+        // would still be caught by ThrowsAny while the endpoint silently regressed
+        // from 409 to 500.
+        var ex = Assert.Throws<TicketClosedException>(ticket.EnsureCanBeCommentedOn);
+
+        Assert.Equal("commented on", ex.Operation);
+    }
+
+    [Theory]
+    [InlineData(TicketStatus.New)]
+    [InlineData(TicketStatus.Open)]
+    [InlineData(TicketStatus.Pending)]
+    [InlineData(TicketStatus.Resolved)]
+    public void EnsureCanBeCommentedOn_AllowsEveryOtherStatus(TicketStatus status)
+    {
+        var ticket = TicketInStatus(status);
+
+        ticket.EnsureCanBeCommentedOn();
+    }
+
+    [Fact]
+    public void EnsureCanBeCommentedOn_ChangesNothing()
+    {
+        // A question, not a mutation. It takes no actor and no instant, and asking it
+        // must not advance the audit trail.
+        var ticket = TicketInStatus(TicketStatus.Open);
+        var updatedAt = ticket.UpdatedAt;
+        var updatedBy = ticket.UpdatedBy;
+
+        ticket.EnsureCanBeCommentedOn();
+
+        Assert.Equal(updatedAt, ticket.UpdatedAt);
+        Assert.Equal(updatedBy, ticket.UpdatedBy);
+    }
+
+    [Fact]
+    public void Ticket_HasNoCommentCollection()
+    {
+        // Pins the "separate aggregate, not an owned collection" decision in code
+        // rather than only in a grep, so it survives a rename a grep would miss.
+        var commentProperties = typeof(Ticket)
+            .GetProperties()
+            .Where(p => typeof(IEnumerable<TicketComment>).IsAssignableFrom(p.PropertyType)
+                || p.PropertyType == typeof(TicketComment))
+            .ToList();
+
+        Assert.Empty(commentProperties);
+    }
 }

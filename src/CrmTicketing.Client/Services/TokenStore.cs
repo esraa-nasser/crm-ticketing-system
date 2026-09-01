@@ -25,14 +25,36 @@ public sealed class TokenStore
 
     public IReadOnlyList<string> Roles { get; private set; } = [];
 
+    /// <summary>
+    /// Whether the signed-in account may act as staff, as reported by the sign-in
+    /// response.
+    /// </summary>
+    /// <remarks>
+    /// The server's own answer, not a grouping this project computes from
+    /// <see cref="Roles"/>: which role names count as staff is a policy, and its single
+    /// declaration lives in the API, which the layer graph puts out of this project's
+    /// reach.
+    ///
+    /// A display hint and never an authorisation decision. A token outlives a role
+    /// change, so this can be stale in both directions; the API refuses what the caller
+    /// may not do regardless of what this says.
+    /// </remarks>
+    public bool IsStaff { get; private set; }
+
     public bool IsSignedIn => !string.IsNullOrEmpty(AccessToken);
 
-    public void Set(string accessToken, string email, Guid userId, IReadOnlyList<string> roles)
+    public void Set(
+        string accessToken,
+        string email,
+        Guid userId,
+        IReadOnlyList<string> roles,
+        bool isStaff)
     {
         AccessToken = accessToken;
         Email = email;
         UserId = userId;
         Roles = roles;
+        IsStaff = isStaff;
     }
 
     public void Clear()
@@ -41,5 +63,6 @@ public sealed class TokenStore
         Email = null;
         UserId = Guid.Empty;
         Roles = [];
+        IsStaff = false;
     }
 }

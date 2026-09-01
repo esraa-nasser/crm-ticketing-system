@@ -66,6 +66,14 @@ public sealed class TicketsTests : BunitContext
 
         public Task<TicketResponse> AssignAsync(Guid id, AssignTicketRequest request, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        // The list page renders no thread. An accidental call is a defect, not a
+        // default to supply.
+        public Task<PagedResponse<TicketCommentResponse>> GetCommentsAsync(Guid ticketId, int page, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<TicketCommentResponse> AddCommentAsync(Guid ticketId, CreateCommentRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private static TicketSummaryResponse Ticket(

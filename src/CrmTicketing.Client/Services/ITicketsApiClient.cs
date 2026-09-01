@@ -44,4 +44,18 @@ public interface ITicketsApiClient
         Guid id,
         AssignTicketRequest request,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// One page of a ticket's comments, newest first. What the caller receives is
+    /// already visibility-filtered by the API; the client does no filtering of its own.
+    /// </summary>
+    Task<PagedResponse<TicketCommentResponse>> GetCommentsAsync(
+        Guid ticketId,
+        int page,
+        CancellationToken cancellationToken);
+
+    Task<TicketCommentResponse> AddCommentAsync(
+        Guid ticketId,
+        CreateCommentRequest request,
+        CancellationToken cancellationToken);
 }
