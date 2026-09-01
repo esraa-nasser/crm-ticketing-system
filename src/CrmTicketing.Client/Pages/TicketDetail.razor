@@ -1,0 +1,390 @@
+@page "/tickets/{Id:guid}"
+@inject ITicketsApiClient TicketsApi
+@inject TicketMetadataProvider Metadata
+@inject TokenStore Tokens
+@inject NavigationManager Navigation
+
+<PageTitle>@(_ticket?.Title ?? "Ticket")</PageTitle>
+
+<p><a href="@BackToListUri()">&larr; Back to tickets</a></p>
+
+@if (_loading)
+{
+    <p><em>Loading ticket…</em></p>
+}
+else if (_notFound)
+{
+    <div class="alert alert-warning" role="alert">
+        <p class="mb-2">That ticket no longer exists, or is not yours to see.</p>
+        <a class="btn btn-sm btn-outline-secondary" href="@BackToListUri()">Back to tickets</a>
+    </div>
+}
+else if (_ticket is null)
+{
+    <div class="alert alert-danger" role="alert">
+        <strong>Could not load the ticket.</strong>
+        <p class="mb-2">@_error</p>
+        <button type="button" class="btn btn-sm btn-outline-danger" @onclick="Reload">Retry</button>
+    </div>
+}
+else
+{
+    <h1>@_ticket.Title</h1>
+
+    @if (_error is not null)
+    {
+        <div class="alert alert-danger" role="alert">@_error</div>
+    }
+
+    <dl class="row">
+        <dt class="col-sm-3">Status</dt>
+        <dd class="col-sm-9">@_ticket.Status</dd>
+
+        <dt class="col-sm-3">Priority</dt>
+        <dd class="col-sm-9">@_ticket.Priority</dd>
+
+        <dt class="col-sm-3">Category</dt>
+        <dd class="col-sm-9">@(_ticket.Category ?? "—")</dd>
+
+        <dt class="col-sm-3">Requester</dt>
+        <dd class="col-sm-9">@_ticket.RequesterId</dd>
+
+        <dt class="col-sm-3">Assignee</dt>
+        <dd class="col-sm-9">@(_ticket.AssigneeId?.ToString() ?? "Unassigned")</dd>
+
+        <dt class="col-sm-3">Created</dt>
+        <dd class="col-sm-9">@DisplayTime.Local(_ticket.CreatedAt)</dd>
+
+        <dt class="col-sm-3">Updated</dt>
+        <dd class="col-sm-9">@DisplayTime.Local(_ticket.UpdatedAt)</dd>
+
+        <dt class="col-sm-3">Description</dt>
+        <dd class="col-sm-9" style="white-space: pre-wrap">@_ticket.Description</dd>
+    </dl>
+
+    <h2 class="h5">Move to</h2>
+    @if (AvailableTransitions.Count == 0)
+    {
+        <p class="text-muted">No further moves are available for this ticket.</p>
+    }
+    else
+    {
+        <div class="d-flex gap-2 flex-wrap mb-3">
+            @foreach (var target in AvailableTransitions)
+            {
+                var to = target;
+                <button type="button" class="btn btn-sm btn-outline-primary"
+                        disabled="@_busy" @onclick="() => Transition(to)">
+                    @to
+                </button>
+            }
+        </div>
+    }
+
+    <h2 class="h5">Assignment</h2>
+    <div class="d-flex gap-2 mb-3">
+        @* Only the action that would change something is offered. Each button was
+           previously shown unconditionally, so clicking one that matched the current
+           state wrote the same value back and advanced UpdatedAt and UpdatedBy for no
+           change — an edit in the audit trail that never edited anything. *@
+        @if (ShowAssignToMe)
+        {
+            <button type="button" class="btn btn-sm btn-outline-primary"
+                    disabled="@_busy" @onclick="AssignToMe">
+                Assign to me
+            </button>
+        }
+        @if (ShowUnassign)
+        {
+            <button type="button" class="btn btn-sm btn-outline-secondary"
+                    disabled="@_busy" @onclick="Unassign">
+                Unassign
+            </button>
+        }
+        @if (!ShowAssignToMe && !ShowUnassign)
+        {
+            <span class="text-muted small">Assigned to someone else.</span>
+        }
+    </div>
+
+    <h2 class="h5">Edit</h2>
+    <EditForm Model="_edit" OnValidSubmit="SaveEdit" FormName="edit-ticket">
+        <div class="mb-2">
+            <label class="form-label" for="edit-title">Title</label>
+            <InputText id="edit-title" class="form-control" @bind-Value="_edit.Title" />
+        </div>
+        <div class="mb-2">
+            <label class="form-label" for="edit-description">Description</label>
+            <InputTextArea id="edit-description" class="form-control" rows="4"
+                           @bind-Value="_edit.Description" />
+        </div>
+        <div class="mb-2">
+            <label class="form-label" for="edit-category">Category</label>
+            <InputText id="edit-category" class="form-control" @bind-Value="_edit.Category" />
+        </div>
+        <div class="mb-2">
+            <label class="form-label" for="edit-priority">Priority</label>
+            <select id="edit-priority" class="form-select" disabled="@(_metadata is null)"
+                    value="@_edit.Priority" @onchange="OnPriorityChanged">
+                @foreach (var priority in _metadata?.Priorities ?? [])
+                {
+                    <option value="@priority">@priority</option>
+                }
+            </select>
+        </div>
+        <button type="submit" class="btn btn-primary" disabled="@_busy">Save changes</button>
+    </EditForm>
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    // Carried through from the list so the back-link restores the caller's place.
+    [SupplyParameterFromQuery] public string? Status { get; set; }
+
+    [SupplyParameterFromQuery] public string? Priority { get; set; }
+
+    [SupplyParameterFromQuery] public int? Page { get; set; }
+
+    private sealed class EditModel
+    {
+        public string Title { get; set; } = string.Empty;
+
+        public string Description { get; set; } = string.Empty;
+
+        public string? Category { get; set; }
+
+        public string? Priority { get; set; }
+    }
+
+    private readonly EditModel _edit = new();
+    private TicketResponse? _ticket;
+    private TicketMetadataResponse? _metadata;
+    private string? _error;
+    private bool _loading;
+    private bool _notFound;
+    private bool _busy;
+    private Guid _loadedId;
+
+    // Straight from the map, keyed on the ticket's current status. A Closed ticket
+    // gets an empty list from the server, so no button renders — the page never tests
+    // for a status name, which would be a second transition rule.
+    private IReadOnlyList<string> AvailableTransitions =>
+        _ticket is not null
+        && _metadata is not null
+        && _metadata.Transitions.TryGetValue(_ticket.Status, out var targets)
+            ? targets
+            : [];
+
+    private bool CanAssignToMe => Tokens.IsSignedIn && Tokens.UserId != Guid.Empty;
+
+    /// <summary>Offered only when it would change the assignee.</summary>
+    private bool ShowAssignToMe =>
+        CanAssignToMe && _ticket is not null && _ticket.AssigneeId != Tokens.UserId;
+
+    /// <summary>
+    /// Offered only when the ticket is assigned to the caller. Assignment is
+    /// self-service — there is no picker — so clearing someone else's assignment is
+    /// not an action this screen offers; taking it with "Assign to me" is.
+    /// </summary>
+    private bool ShowUnassign =>
+        CanAssignToMe && _ticket is not null && _ticket.AssigneeId == Tokens.UserId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == Id)
+        {
+            return;
+        }
+
+        _loadedId = Id;
+        await LoadAsync();
+    }
+
+    private async Task Reload()
+    {
+        _loadedId = Guid.Empty;
+        await OnParametersSetAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        _notFound = false;
+
+        await LoadMetadataAsync();
+
+        try
+        {
+            _ticket = await TicketsApi.GetTicketAsync(Id, CancellationToken.None);
+            PopulateEditForm();
+        }
+        catch (Exception ex) when (ex is ApiRequestException or HttpRequestException or TaskCanceledException)
+        {
+            _ticket = null;
+            HandleFailure(ex);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task LoadMetadataAsync()
+    {
+        if (_metadata is not null)
+        {
+            return;
+        }
+
+        try
+        {
+            _metadata = await Metadata.GetAsync();
+        }
+        catch (Exception ex) when (ex is ApiRequestException or HttpRequestException or TaskCanceledException)
+        {
+            // The ticket still renders; the transition buttons and the priority list
+            // stay empty rather than the page going blank.
+            _metadata = null;
+        }
+    }
+
+    private void PopulateEditForm()
+    {
+        if (_ticket is null)
+        {
+            return;
+        }
+
+        _edit.Title = _ticket.Title;
+        _edit.Description = _ticket.Description;
+        _edit.Category = _ticket.Category;
+        _edit.Priority = _ticket.Priority;
+    }
+
+    private Task Transition(string target) =>
+        WriteThenRefreshAsync(() => TicketsApi.TransitionAsync(
+            Id,
+            new TransitionTicketRequest(target),
+            CancellationToken.None));
+
+    private Task AssignToMe() =>
+        WriteThenRefreshAsync(() => TicketsApi.AssignAsync(
+            Id,
+            new AssignTicketRequest(Tokens.UserId),
+            CancellationToken.None));
+
+    private Task Unassign() =>
+        WriteThenRefreshAsync(() => TicketsApi.AssignAsync(
+            Id,
+            new AssignTicketRequest(null),
+            CancellationToken.None));
+
+    private Task SaveEdit() =>
+        WriteThenRefreshAsync(() => TicketsApi.UpdateAsync(
+            Id,
+            new UpdateTicketRequest(_edit.Title, _edit.Description, _edit.Category, _edit.Priority),
+            CancellationToken.None));
+
+    /// <summary>
+    /// Performs a write, then re-reads the ticket from the server.
+    /// </summary>
+    /// <remarks>
+    /// The write's own response is discarded deliberately. Re-reading also catches a
+    /// change someone else made in the meantime, and a screen showing what this client
+    /// hoped happened is how a silently failed write becomes a lie.
+    /// </remarks>
+    private async Task WriteThenRefreshAsync(Func<Task<TicketResponse>> write)
+    {
+        _busy = true;
+        _error = null;
+
+        try
+        {
+            await write();
+        }
+        catch (Exception ex) when (ex is ApiRequestException or HttpRequestException or TaskCanceledException)
+        {
+            HandleFailure(ex);
+
+            // Re-read even after a refused write: a 409 means the ticket moved
+            // underneath us, and the displayed status should become the true one.
+            await RefreshQuietlyAsync();
+            _busy = false;
+            return;
+        }
+
+        await RefreshQuietlyAsync();
+        _busy = false;
+    }
+
+    private async Task RefreshQuietlyAsync()
+    {
+        try
+        {
+            _ticket = await TicketsApi.GetTicketAsync(Id, CancellationToken.None);
+            PopulateEditForm();
+        }
+        catch (Exception ex) when (ex is ApiRequestException or HttpRequestException or TaskCanceledException)
+        {
+            // The write may have succeeded and only the read failed. Leave the last
+            // known ticket on screen rather than rolling the display back, and say so.
+            if (ex is ApiRequestException { StatusCode: 401 })
+            {
+                RedirectToSignIn();
+                return;
+            }
+
+            _error ??= "The ticket was updated, but could not be reloaded.";
+        }
+    }
+
+    // Branches on the status code only. Matching on message text would couple the
+    // page to wording the API is free to change.
+    private void HandleFailure(Exception ex)
+    {
+        if (ex is not ApiRequestException api)
+        {
+            _error = "Could not reach the API.";
+            return;
+        }
+
+        switch (api.StatusCode)
+        {
+            case 401:
+                RedirectToSignIn();
+                break;
+            case 403:
+                _error = "You do not have permission to do that.";
+                break;
+            case 404:
+                _notFound = true;
+                _error = null;
+                break;
+            default:
+                // 400 and 409 already carry a useful message: the validation text or
+                // the conflict description, extracted by TicketsApiClient.
+                _error = api.Message;
+                break;
+        }
+    }
+
+    private void RedirectToSignIn() =>
+        Navigation.NavigateTo($"signin?returnUrl={Uri.EscapeDataString(RelativePath())}");
+
+    private string RelativePath() =>
+        "/" + Navigation.ToBaseRelativePath(Navigation.Uri);
+
+    private string BackToListUri() =>
+        Navigation.GetUriWithQueryParameters(
+            Navigation.ToAbsoluteUri("tickets").ToString(),
+            new Dictionary<string, object?>
+            {
+                ["status"] = string.IsNullOrEmpty(Status) ? null : Status,
+                ["priority"] = string.IsNullOrEmpty(Priority) ? null : Priority,
+                ["page"] = Page is > 1 ? Page : null,
+            });
+
+    private void OnPriorityChanged(ChangeEventArgs args) => _edit.Priority = args.Value as string;
+}

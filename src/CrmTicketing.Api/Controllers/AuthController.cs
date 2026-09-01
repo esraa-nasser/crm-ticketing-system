@@ -73,6 +73,7 @@ public sealed class AuthController(
             AccessToken: CreateToken(user, roles, expiresAt),
             ExpiresAt: expiresAt,
             Email: user.Email ?? string.Empty,
+            UserId: user.Id,
             Roles: [.. roles]));
     }
 

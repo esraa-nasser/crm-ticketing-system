@@ -49,6 +49,23 @@ public sealed class TicketsTests : BunitContext
             MetadataException is not null
                 ? Task.FromException<TicketMetadataResponse>(MetadataException)
                 : Task.FromResult(Metadata);
+
+        // This class tests the list page, which performs no writes. Throwing rather
+        // than returning a default makes an accidental call visible.
+        public Task<TicketResponse> GetTicketAsync(Guid id, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<TicketResponse> CreateAsync(CreateTicketRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<TicketResponse> UpdateAsync(Guid id, UpdateTicketRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<TicketResponse> TransitionAsync(Guid id, TransitionTicketRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<TicketResponse> AssignAsync(Guid id, AssignTicketRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private static TicketSummaryResponse Ticket(
@@ -294,5 +311,25 @@ public sealed class TicketsTests : BunitContext
         page.Render();
 
         Assert.Single(stub.Calls);
+    }
+
+    [Fact]
+    public void CreatedAt_RendersInLocalTimeNotRawUtc()
+    {
+        // Carried since story 05: the list rendered the raw DateTimeOffset, so a user
+        // at UTC+03 saw a ticket they had just made as three hours old.
+        var stub = Arrange();
+        var created = new DateTimeOffset(2026, 9, 1, 13, 45, 0, TimeSpan.Zero);
+        stub.Result = new(
+            [Ticket("A ticket") with { CreatedAt = created }],
+            Page: 1,
+            PageSize: 25,
+            TotalCount: 1);
+
+        var markup = Render<Tickets>().Markup;
+
+        // Holds on a UTC machine too: the instants coincide there, the formats do not.
+        Assert.DoesNotContain(created.ToString("u"), markup, StringComparison.Ordinal);
+        Assert.Contains(DisplayTime.Local(created), markup, StringComparison.Ordinal);
     }
 }

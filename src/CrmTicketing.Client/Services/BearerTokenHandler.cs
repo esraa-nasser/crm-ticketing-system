@@ -11,6 +11,13 @@ namespace CrmTicketing.Client.Services;
 /// </remarks>
 public sealed class BearerTokenHandler(TokenStore tokens) : DelegatingHandler
 {
+    /// <summary>
+    /// The store this handler reads from. Exposed so a composition test can assert it
+    /// is the same instance a component receives — if the two ever diverge, the token
+    /// is set in one place and read from another, and every call goes out anonymous.
+    /// </summary>
+    internal TokenStore Tokens => tokens;
+
     protected override Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
         CancellationToken cancellationToken)

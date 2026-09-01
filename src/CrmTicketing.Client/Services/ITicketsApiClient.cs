@@ -21,4 +21,27 @@ public interface ITicketsApiClient
         CancellationToken cancellationToken);
 
     Task<TicketMetadataResponse> GetMetadataAsync(CancellationToken cancellationToken);
+
+    Task<TicketResponse> GetTicketAsync(Guid id, CancellationToken cancellationToken);
+
+    Task<TicketResponse> CreateAsync(CreateTicketRequest request, CancellationToken cancellationToken);
+
+    Task<TicketResponse> UpdateAsync(
+        Guid id,
+        UpdateTicketRequest request,
+        CancellationToken cancellationToken);
+
+    Task<TicketResponse> TransitionAsync(
+        Guid id,
+        TransitionTicketRequest request,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Assigns the ticket, or unassigns it when
+    /// <see cref="AssignTicketRequest.AssigneeId"/> is null. One route serves both.
+    /// </summary>
+    Task<TicketResponse> AssignAsync(
+        Guid id,
+        AssignTicketRequest request,
+        CancellationToken cancellationToken);
 }

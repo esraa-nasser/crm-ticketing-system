@@ -31,6 +31,34 @@ public sealed class TicketMetadataProviderTests
 
             return Task.FromResult(metadata!);
         }
+
+        // This class tests the metadata provider, which performs no writes. Throwing
+        // rather than returning a default makes an accidental call visible.
+        public Task<TicketResponse> GetTicketAsync(Guid id, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<TicketResponse> CreateAsync(
+            CreateTicketRequest request,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<TicketResponse> UpdateAsync(
+            Guid id,
+            UpdateTicketRequest request,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<TicketResponse> TransitionAsync(
+            Guid id,
+            TransitionTicketRequest request,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<TicketResponse> AssignAsync(
+            Guid id,
+            AssignTicketRequest request,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private static TicketMetadataResponse Metadata() => new(

@@ -64,8 +64,8 @@ else
                 new SignInRequest(_model.Email, _model.Password),
                 CancellationToken.None);
 
-            Tokens.Set(response.AccessToken, response.Email, response.Roles);
-            Navigation.NavigateTo(string.IsNullOrEmpty(ReturnUrl) ? "tickets" : ReturnUrl);
+            Tokens.Set(response.AccessToken, response.Email, response.UserId, response.Roles);
+            Navigation.NavigateTo(SafeReturnUrl());
         }
         catch (Exception ex) when (ex is ApiRequestException or HttpRequestException or TaskCanceledException)
         {
@@ -75,6 +75,34 @@ else
         {
             _busy = false;
         }
+    }
+
+    /// <summary>
+    /// Where to land after signing in: the requested <c>returnUrl</c> when it is a
+    /// same-site path, the ticket list otherwise.
+    /// </summary>
+    /// <remarks>
+    /// The check is a security control, not tidiness. Navigating to an unchecked
+    /// <c>returnUrl</c> makes this page an open redirect: a link to
+    /// <c>/signin?returnUrl=https://evil.example</c> would send a user who has just
+    /// typed their password to another site, and it would look as though this
+    /// application sent them. Only a path beginning with a single "/" is accepted —
+    /// "//host" is protocol-relative and reaches another origin.
+    /// </remarks>
+    private string SafeReturnUrl()
+    {
+        const string Default = "tickets";
+
+        if (string.IsNullOrWhiteSpace(ReturnUrl))
+        {
+            return Default;
+        }
+
+        var candidate = ReturnUrl.Trim();
+
+        return candidate.StartsWith('/') && !candidate.StartsWith("//", StringComparison.Ordinal)
+            ? candidate
+            : Default;
     }
 
     private void SignOut()
