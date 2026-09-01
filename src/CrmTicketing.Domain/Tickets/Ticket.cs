@@ -169,6 +169,32 @@ public sealed class Ticket : Entity
         Touch(at, actorId);
     }
 
+    /// <summary>
+    /// Throws when the ticket's state forbids a comment.
+    /// </summary>
+    /// <remarks>
+    /// The compromise the aggregate split requires: comments live outside the
+    /// aggregate - <see cref="TicketComment"/> is its own root, referencing a ticket
+    /// by id - and the rule about them lives inside it. A caller writing
+    /// <c>if (ticket.Status == TicketStatus.Closed)</c> for itself would be a second
+    /// declaration of a domain rule, which is what drifts the first time a fifth
+    /// status appears.
+    ///
+    /// Costs no extra query: the API already loads the ticket before commenting,
+    /// because it must check the caller may see it at all.
+    ///
+    /// Takes no actor and no instant, because it changes nothing. It is a question,
+    /// not a mutation.
+    /// </remarks>
+    /// <exception cref="TicketClosedException">The ticket is closed.</exception>
+    public void EnsureCanBeCommentedOn()
+    {
+        if (Status == TicketStatus.Closed)
+        {
+            throw new TicketClosedException(Status, "commented on");
+        }
+    }
+
     public void ChangePriority(TicketPriority priority, DateTimeOffset at, Guid actorId)
     {
         RequireActor(actorId);

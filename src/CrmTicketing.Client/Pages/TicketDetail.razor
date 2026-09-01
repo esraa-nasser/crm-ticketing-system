@@ -134,6 +134,12 @@ else
         </div>
         <button type="submit" class="btn btn-primary" disabled="@_busy">Save changes</button>
     </EditForm>
+
+    <h2 class="h5 mt-4">Comments</h2>
+    @* Owns its own loading, error, and paging state. It does not re-render when the
+       ticket is transitioned, and does not need to: a thread does not change because
+       a status did. *@
+    <TicketComments TicketId="Id" />
 }
 
 @code {

@@ -59,6 +59,18 @@ public sealed class TicketMetadataProviderTests
             AssignTicketRequest request,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<PagedResponse<TicketCommentResponse>> GetCommentsAsync(
+            Guid ticketId,
+            int page,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<TicketCommentResponse> AddCommentAsync(
+            Guid ticketId,
+            CreateCommentRequest request,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private static TicketMetadataResponse Metadata() => new(

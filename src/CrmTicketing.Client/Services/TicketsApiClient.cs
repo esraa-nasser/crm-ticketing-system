@@ -85,6 +85,24 @@ public sealed class TicketsApiClient(HttpClient httpClient) : ITicketsApiClient
             request,
             cancellationToken);
 
+    public Task<PagedResponse<TicketCommentResponse>> GetCommentsAsync(
+        Guid ticketId,
+        int page,
+        CancellationToken cancellationToken) =>
+        GetAsync<PagedResponse<TicketCommentResponse>>(
+            $"api/tickets/{ticketId}/comments?page={page}&pageSize={PageSize}",
+            cancellationToken);
+
+    public Task<TicketCommentResponse> AddCommentAsync(
+        Guid ticketId,
+        CreateCommentRequest request,
+        CancellationToken cancellationToken) =>
+        SendAsync<TicketCommentResponse>(
+            HttpMethod.Post,
+            $"api/tickets/{ticketId}/comments",
+            request,
+            cancellationToken);
+
     private Task<T> GetAsync<T>(string requestUri, CancellationToken cancellationToken) =>
         SendAsync<T>(new HttpRequestMessage(HttpMethod.Get, requestUri), cancellationToken);
 

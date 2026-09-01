@@ -16,7 +16,7 @@ public sealed class TokenStoreTests
     {
         var tokens = new TokenStore();
 
-        tokens.Set("a-token", "agent@example.com", UserId, ["Agent"]);
+        tokens.Set("a-token", "agent@example.com", UserId, ["Agent"], isStaff: true);
 
         Assert.Equal(UserId, tokens.UserId);
         Assert.Equal("agent@example.com", tokens.Email);
@@ -40,7 +40,7 @@ public sealed class TokenStoreTests
     public void Clear_ResetsTheUserId()
     {
         var tokens = new TokenStore();
-        tokens.Set("a-token", "agent@example.com", UserId, ["Agent"]);
+        tokens.Set("a-token", "agent@example.com", UserId, ["Agent"], isStaff: true);
 
         tokens.Clear();
 
@@ -52,6 +52,45 @@ public sealed class TokenStoreTests
     }
 
     [Fact]
+    public void Set_StoresIsStaffFromTheResponse()
+    {
+        // The server's own answer. The store does not compute it from Roles, which
+        // would be a second declaration of what staff means.
+        var tokens = new TokenStore();
+
+        tokens.Set("a-token", "agent@example.com", UserId, ["Agent"], isStaff: true);
+
+        Assert.True(tokens.IsStaff);
+    }
+
+    [Fact]
+    public void Set_HonoursIsStaffEvenWhenARoleLooksLikeStaff()
+    {
+        // Deliberately contradictory: the flag wins, because the grouping is the
+        // server's to decide and this project cannot reach the declaration of it.
+        var tokens = new TokenStore();
+
+        tokens.Set("a-token", "agent@example.com", UserId, ["Agent"], isStaff: false);
+
+        Assert.False(tokens.IsStaff);
+    }
+
+    [Fact]
+    public void IsStaff_IsFalseBeforeSignIn() =>
+        Assert.False(new TokenStore().IsStaff);
+
+    [Fact]
+    public void Clear_ResetsIsStaff()
+    {
+        var tokens = new TokenStore();
+        tokens.Set("a-token", "agent@example.com", UserId, ["Agent"], isStaff: true);
+
+        tokens.Clear();
+
+        Assert.False(tokens.IsStaff);
+    }
+
+    [Fact]
     public void Set_AcceptsAnEmptyUserIdWithoutThrowing()
     {
         // The store does not validate: a server that sent Guid.Empty is the server's
@@ -59,7 +98,7 @@ public sealed class TokenStoreTests
         // during sign-in.
         var tokens = new TokenStore();
 
-        tokens.Set("a-token", "agent@example.com", Guid.Empty, []);
+        tokens.Set("a-token", "agent@example.com", Guid.Empty, [], isStaff: false);
 
         Assert.Equal(Guid.Empty, tokens.UserId);
         Assert.True(tokens.IsSignedIn);

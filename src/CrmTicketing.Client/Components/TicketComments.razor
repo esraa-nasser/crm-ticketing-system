@@ -1,0 +1,264 @@
+@inject ITicketsApiClient TicketsApi
+@inject TokenStore Tokens
+@inject NavigationManager Navigation
+
+@if (_loading)
+{
+    <p><em>Loading comments…</em></p>
+}
+else
+{
+    @if (_error is not null)
+    {
+        <div class="alert alert-danger" role="alert">
+            <p class="mb-2">@_error</p>
+            <button type="button" class="btn btn-sm btn-outline-danger" @onclick="Reload">Retry</button>
+        </div>
+    }
+
+    @if (_page is null)
+    {
+        @* Nothing to render and no error already shown: the very first load failed
+           silently. Say so rather than leaving a blank space where a thread goes. *@
+        @if (_error is null)
+        {
+            <p class="text-muted">The comments could not be loaded.</p>
+        }
+    }
+    else if (_page.Items.Count == 0)
+    {
+        <p class="text-muted" data-testid="comments-empty">No comments yet.</p>
+    }
+    else
+    {
+        <ul class="list-unstyled" data-testid="comment-list">
+            @foreach (var comment in _page.Items)
+            {
+                <li class="border rounded p-2 mb-2" data-testid="comment">
+                    <div class="d-flex justify-content-between align-items-start gap-2">
+                        <span class="small text-muted">@comment.AuthorId</span>
+                        <span class="small text-muted">@DisplayTime.Local(comment.CreatedAt)</span>
+                    </div>
+                    @if (comment.IsInternal)
+                    {
+                        @* A staff reader must be able to tell at a glance what the
+                           requester can see. An unmarked internal comment is one
+                           screenshot away from being sent to them. *@
+                        <span class="badge text-bg-warning" data-testid="internal-badge">Internal</span>
+                    }
+                    <p class="mb-0 mt-1" style="white-space: pre-wrap">@comment.Body</p>
+                </li>
+            }
+        </ul>
+
+        @if (HasMorePages)
+        {
+            <div class="d-flex gap-2 align-items-center mb-3">
+                <button type="button" class="btn btn-sm btn-outline-secondary"
+                        disabled="@(_busy || _page.Page <= 1)" @onclick="PreviousPage">
+                    Newer
+                </button>
+                <span class="small text-muted">Page @_page.Page of @LastPage</span>
+                <button type="button" class="btn btn-sm btn-outline-secondary"
+                        disabled="@(_busy || _page.Page >= LastPage)" @onclick="NextPage">
+                    Older
+                </button>
+            </div>
+        }
+    }
+
+    <div class="mb-3">
+        <label class="form-label" for="comment-body">Add a comment</label>
+        <textarea id="comment-body" class="form-control" rows="3"
+                  disabled="@_busy" value="@_body" @onchange="OnBodyChanged"></textarea>
+
+        @if (Tokens.IsStaff)
+        {
+            @* Staff only. The API refuses an internal comment from anyone else with a
+               403 regardless of what this renders — this hides a control the caller
+               cannot use, it does not enforce the rule. *@
+            <div class="form-check mt-2">
+                <input class="form-check-input" type="checkbox" id="comment-internal"
+                       disabled="@_busy" checked="@_isInternal" @onchange="OnInternalChanged" />
+                <label class="form-check-label" for="comment-internal">
+                    Internal (staff only)
+                </label>
+            </div>
+        }
+
+        <button type="button" class="btn btn-primary mt-2"
+                disabled="@(_busy || string.IsNullOrWhiteSpace(_body))" @onclick="Post">
+            Post comment
+        </button>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid TicketId { get; set; }
+
+    private PagedResponse<TicketCommentResponse>? _page;
+    private string _body = string.Empty;
+    private bool _isInternal;
+    private string? _error;
+    private bool _loading;
+    private bool _busy;
+    private int _currentPage = 1;
+    private Guid _loadedId;
+
+    private int LastPage =>
+        _page is null || _page.PageSize <= 0
+            ? 1
+            : Math.Max(1, (int)Math.Ceiling(_page.TotalCount / (double)_page.PageSize));
+
+    // Driven by what the server served, never by a client-side page-size constant.
+    private bool HasMorePages => _page is not null && _page.TotalCount > _page.PageSize;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedId == TicketId)
+        {
+            return;
+        }
+
+        _loadedId = TicketId;
+        _currentPage = 1;
+        await LoadAsync();
+    }
+
+    private async Task Reload()
+    {
+        _loadedId = Guid.Empty;
+        await OnParametersSetAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+
+        try
+        {
+            _page = await TicketsApi.GetCommentsAsync(TicketId, _currentPage, CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is ApiRequestException or HttpRequestException or TaskCanceledException)
+        {
+            _page = null;
+            HandleFailure(ex);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task Post()
+    {
+        // A request that can only ever return 400 is not worth sending.
+        if (string.IsNullOrWhiteSpace(_body))
+        {
+            return;
+        }
+
+        _busy = true;
+        _error = null;
+
+        try
+        {
+            await TicketsApi.AddCommentAsync(
+                TicketId,
+                new CreateCommentRequest(_body, _isInternal),
+                CancellationToken.None);
+
+            // Clear the draft only once the write is known to have succeeded. Losing
+            // what someone typed to a failed request is worse than a stale box.
+            _body = string.Empty;
+            _isInternal = false;
+
+            // A new comment is the newest, so it is on page 1 whatever page was showing.
+            _currentPage = 1;
+        }
+        catch (Exception ex) when (ex is ApiRequestException or HttpRequestException or TaskCanceledException)
+        {
+            HandleFailure(ex);
+            _busy = false;
+            return;
+        }
+
+        // The 201 response is discarded deliberately and the thread re-read. Appending
+        // locally would show a thread missing whatever someone else wrote in the
+        // meantime, and would show the comment as posted even if it silently was not.
+        await RefreshQuietlyAsync();
+        _busy = false;
+    }
+
+    private Task PreviousPage() => GoToPage(_currentPage - 1);
+
+    private Task NextPage() => GoToPage(_currentPage + 1);
+
+    private async Task GoToPage(int page)
+    {
+        _busy = true;
+        _currentPage = page < 1 ? 1 : page;
+        await RefreshQuietlyAsync();
+        _busy = false;
+    }
+
+    private async Task RefreshQuietlyAsync()
+    {
+        try
+        {
+            _page = await TicketsApi.GetCommentsAsync(TicketId, _currentPage, CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is ApiRequestException or HttpRequestException or TaskCanceledException)
+        {
+            if (ex is ApiRequestException { StatusCode: 401 })
+            {
+                RedirectToSignIn();
+                return;
+            }
+
+            // The comment may have been posted and only the read failed. Leave the last
+            // known thread on screen rather than rolling the display back, and say so.
+            _error ??= "The comment was posted, but the thread could not be reloaded.";
+        }
+    }
+
+    // Branches on the status code only. Matching on message text would couple this
+    // component to wording the API is free to change.
+    private void HandleFailure(Exception ex)
+    {
+        if (ex is not ApiRequestException api)
+        {
+            _error = "Could not reach the API.";
+            return;
+        }
+
+        switch (api.StatusCode)
+        {
+            case 401:
+                RedirectToSignIn();
+                break;
+            case 403:
+                _error = "You do not have permission to post an internal comment.";
+                break;
+            case 404:
+                _error = "That ticket no longer exists, or is not yours to see.";
+                break;
+            default:
+                // 400 and 409 already carry a useful message: the validation text or
+                // the reason the ticket refused the comment.
+                _error = api.Message;
+                break;
+        }
+    }
+
+    private void RedirectToSignIn() =>
+        Navigation.NavigateTo($"signin?returnUrl={Uri.EscapeDataString(RelativePath())}");
+
+    private string RelativePath() =>
+        "/" + Navigation.ToBaseRelativePath(Navigation.Uri);
+
+    private void OnBodyChanged(ChangeEventArgs args) => _body = args.Value as string ?? string.Empty;
+
+    private void OnInternalChanged(ChangeEventArgs args) => _isInternal = args.Value is true;
+}

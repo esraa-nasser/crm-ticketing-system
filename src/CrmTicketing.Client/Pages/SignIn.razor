@@ -64,7 +64,12 @@ else
                 new SignInRequest(_model.Email, _model.Password),
                 CancellationToken.None);
 
-            Tokens.Set(response.AccessToken, response.Email, response.UserId, response.Roles);
+            Tokens.Set(
+                response.AccessToken,
+                response.Email,
+                response.UserId,
+                response.Roles,
+                response.IsStaff);
             Navigation.NavigateTo(SafeReturnUrl());
         }
         catch (Exception ex) when (ex is ApiRequestException or HttpRequestException or TaskCanceledException)

@@ -33,3 +33,23 @@ internal sealed record DemoTicketSpecification(
     TicketStatus TargetStatus,
     bool AssignToAgent,
     int AgeInDays);
+
+/// <summary>
+/// One seeded comment, declared rather than constructed.
+/// </summary>
+/// <remarks>
+/// Separated from the code that executes it for the same reason as
+/// <see cref="DemoTicketSpecification"/>: the shape of the demo thread is a pure value
+/// a test can assert on without a database, a scope, or Identity.
+/// </remarks>
+/// <param name="TicketIndex">Index into <c>DemoDataSeeder.Specifications</c>.</param>
+/// <param name="Author">Which seeded user wrote it.</param>
+/// <param name="Body">Obviously synthetic, like every other seeded string.</param>
+/// <param name="IsInternal">Whether it is staff-only. A customer never receives one.</param>
+/// <param name="HoursAfterTicket">Offset from the ticket's creation instant.</param>
+internal sealed record DemoCommentSpecification(
+    int TicketIndex,
+    DemoRequester Author,
+    string Body,
+    bool IsInternal,
+    int HoursAfterTicket);
