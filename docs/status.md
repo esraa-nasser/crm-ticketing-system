@@ -1,6 +1,6 @@
 # Project status — CRM Ticketing System
 
-Prepared 31 August 2026. Companion to [README.md](../README.md), which covers
+Prepared 2 September 2026. Companion to [README.md](../README.md), which covers
 how to run the system. This document covers **what was built, what was not, and
 why** — the questions a reviewer is most likely to ask.
 
@@ -10,14 +10,16 @@ why** — the questions a reviewer is most likely to ask.
 
 A working three-tier ticketing system: Blazor WebAssembly client, ASP.NET Core
 Web API, PostgreSQL. The ticket domain model, its persistence, its complete HTTP
-surface, the ticket list screen, identity with role-based authorisation, and a
-seeded demo dataset are implemented, tested, and merged.
+surface, identity with role-based authorisation, a seeded demo dataset, and the
+full ticket workflow from the browser — list, detail, create, edit, transition,
+assign, and a comment thread with staff-only visibility — are implemented,
+tested, and merged. Controls a role cannot use are no longer drawn.
 
 | | |
 |---|---|
-| Stories merged | 7 |
-| GitHub issues closed | #3, #4, #5, #6, #8, #9, #10, #12 |
-| Tests | 254, across four projects, passing with no API and no database |
+| Stories merged | 10 |
+| GitHub issues closed | 12 of 33 |
+| Tests | 397, across four projects, passing with no API and no database |
 | Merges to `main` | All via pull request, gated on build, test, and an SDD check |
 | Live verification | Every endpoint exercised against a real PostgreSQL database |
 
@@ -104,6 +106,31 @@ the URL, so a filtered view is linkable and the browser back button works. Four
 visually distinct states — loading, rows, empty, failed — so a connection failure
 never reads as "your data is gone."
 
+A detail screen at `/tickets/{id}` carries every write the API offers: edit,
+status transition, and self-service assignment. Transition buttons are rendered
+from the metadata map for the ticket's current status, so no status name and no
+transition rule is written anywhere in the client — a `Closed` ticket offers
+nothing because the map is empty, not because a page special-cases it. Every write
+re-fetches from the server rather than patching local state, because a screen
+showing what the client hoped happened is how a silently failed write becomes a
+lie. Failures are specific: a 409 shows the conflict, a 403 says the action is not
+permitted, a 404 says the ticket is gone, and none of them shows a trace id.
+
+A comment thread on each ticket, with an internal/public choice for staff. A
+Customer never receives an internal comment, and that filter lives in the
+repository beside the row-level ticket rule rather than in a controller or a
+screen. Timestamps render in the browser's zone, so a user at UTC+03 no longer
+reads a fresh write as three hours old.
+
+Role logic lives in one place. A single capability service answers "may this
+caller?" from the token, and no component tests a role name — a standing `grep`
+in the verification checklist fails if a fourth inline role check ever appears.
+Every capability mirrors a rule the API already enforces, cited by file and line;
+a control with no API counterpart is not gated at all. **The hidden control is a
+courtesy, never the defence**: the server refuses the action whether or not the
+browser drew the button, and the tests that pin those refusals are required to
+pass unedited by the story that hides them.
+
 ---
 
 ## How it was built
@@ -123,6 +150,7 @@ plans, before any code existed:
 | 05 | Specified an exception class that could not compile; a section arguing against its own acceptance criteria; a verification step whose `grep` would report generated code as a violation |
 | 06 | A foreign key that would turn a working request into a 500; JWT role claims that would silently fail every role check; a seeder with no call site; a bootstrap gap making the whole story unusable; a transition rule expressed as prose that permitted a customer to self-triage |
 | 07 | A guard that returned silently where its neighbour threw, for the same failure; a miscounted row in the plan's own data table; two edge cases citing the wrong guard after a renumber; a verification `grep` matching every type whose name merely starts with `Ticket` |
+| 10 | A count stated as three where the file held five and the plan's own table listed four; a verification step giving two contradictory pass conditions for one command; an instruction to record an issue number in a plan the same document declares read-only during implementation; a task leaving "remove it if unused" as a judgement call; two `git diff` checks against a moving branch tip rather than the merge base |
 
 **And four the review missed.** Story 08 found four defects that no plan
 described and no test could reach. Three had been live on `main`:
@@ -163,6 +191,29 @@ the second and third rows in the table on the day they were written, and is
 tracked separately from the repository integration tests in #29, because they sit
 at a different layer and neither would have found these.
 
+Both additions are now in the acceptance criteria of every story: a recorded
+code-reading pass, and a manual two-role check in a browser. The end-to-end test
+itself remains unwritten (#45).
+
+**A fifth failure, of a different species.** Story 10's browser check failed on its
+first run: a Customer was shown the assignment controls the story had just removed.
+Nothing was wrong with the code. The client running in the browser had been started
+before the change, and Blazor WebAssembly serves whatever was compiled at startup —
+397 passing tests were describing a build nobody was looking at.
+
+What identified it was a contradiction rather than a stack trace. The Customer saw
+the internal-comment toggle correctly hidden while the assignment section was
+correctly *not* hidden, and both are decided by the same expression. No state of
+the token store produces both, so the artefact in the browser could not be the
+artefact the tests had run against.
+
+This is worth separating from the four above because the remedy differs. Those
+argue for reading code the plan never described. This one argues for confirming
+*what is actually running* before trusting a manual check at all — a manual check
+against a stale build is not a weaker signal than none, it is a false one, and it
+would have been recorded as a passing verification had the two observations not
+contradicted each other.
+
 Additionally, an error-contract design was changed after capturing a real API
 response: the planned three-field problem-details record would have shown users
 "One or more validation errors occurred." instead of the actual validation
@@ -187,13 +238,16 @@ now used as test fixtures rather than hand-written ones.
 
 | Area | Issues | Status |
 |---|---|---|
-| Ticket detail view and write actions | #13 | **Next.** Authorisation is in place, so writes can now be attributed. |
-| Permission-gated UI | #16 | Endpoints already refuse the call; this hides controls a role cannot use. |
-| Kanban board | #14 | Consumes the transition map the API already publishes. |
-| Comments and activity timeline | #11 | Needs an aggregate-boundary decision of its own. |
+| Accounts and contacts | #18 | **Next.** Intake written and merged; the aggregates are specified and unbuilt. The product has been called a CRM since the first commit and has never held a customer record. |
+| Ticket-to-contact link | #19, #43 | The story that matters, and the one that changes what existing data means: row-level filtering currently keys on the login that raised a ticket, which is the wrong key once an agent can raise one on someone's behalf. |
+| Activity timeline | #47 | Split from comments deliberately. A derived event history is a different design from authored text; shipping half of each was the alternative. |
+| Kanban board | #14 | Consumes the transition map the API already publishes and the transition handling story 08 built. |
+| Per-caller transitions from the metadata endpoint | #51 | The client is shown moves the API may refuse, because the endpoint publishes what is legal for anyone rather than for this caller. Gating them in the browser would mean a second copy of an authorisation rule. |
 | Repository integration tests | #29 | Query logic has unit coverage; nothing exercises it against a real database. |
-| SLA policies | #21 | Needs business-hours arithmetic. |
-| Accounts, contacts, reporting | — | Two feature areas with no intake written; unspecified, not merely unbuilt. |
+| End-to-end test | #45 | Named as a remedy above and still unwritten. |
+| SLA policies | #21 | Needs business-hours arithmetic, and probably an account tier to key on — so it waits for #18 and #19. |
+| Optimistic concurrency | — | See known defects: last write wins, and a fix is a domain change and a migration. |
+| Reporting and dashboards | #22-#25 | A feature area with an epic and three stories, no intake written. |
 
 ### On authentication specifically
 
@@ -259,19 +313,20 @@ temporarily removed and the suite re-run, and exactly the expected tests failed.
 A test that passes whether or not the rule exists is worse than no test.
 
 **Can a user create a ticket?**
-Over the API, yes — verified live. Not from the UI: the list screen is read-only,
-and write actions are issue #13, which now has an acting user to attribute them
-to.
+Yes, from the browser as well as the API, and the requester is always the
+signed-in user — there is no requester field on the form and no way to raise a
+ticket on someone else's behalf. That last case is #43, and it waits for a contact
+record to raise it against.
 
 **How do you know it works?**
-Two independent ways. 171 automated tests that run with no API and no database.
+Two independent ways. 397 automated tests that run with no API and no database.
 And a live end-to-end pass against real PostgreSQL confirming things tests
 cannot: that `Location` resolves, that a value object materialises on read, that
 `pageSize=500` is clamped to 100 by the server, and that an illegal transition
 returns 409 with the attempted values — including after a process restart, which
 proved the refusal came from stored state rather than a cached object.
 
-**Six stories seems slow.**
+**Ten stories seems slow.**
 The specification work is front-loaded, and it substitutes for rework. The table
 above lists defects caught before code existed, including two in the auth plan
 that would each have cost a day of debugging. The remaining work is also
