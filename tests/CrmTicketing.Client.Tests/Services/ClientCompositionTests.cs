@@ -37,6 +37,7 @@ public sealed class ClientCompositionTests
             client.BaseAddress = new Uri(ApiBaseAddress));
 
         services.AddSingleton<TokenStore>();
+        services.AddSingleton<Capabilities>();
         services.AddScoped<BearerTokenHandler>();
 
         services.AddHttpClient<AuthApiClient>(client =>
@@ -106,5 +107,28 @@ public sealed class ClientCompositionTests
             .CreateHandler(nameof(ITicketsApiClient));
 
         Assert.Equal("a-token", FindBearerHandler(chain).Tokens.AccessToken);
+    }
+
+    [Fact]
+    public void Capabilities_ShareTheTokenStoreTheComponentsGet()
+    {
+        // The same defect shape story 08 found, in a new place: if Capabilities held a
+        // different TokenStore than the sign-in page writes to, every gated control
+        // would stay hidden after a successful sign-in — a working system that looks
+        // like a permissions bug.
+        using var provider = BuildProvider();
+
+        var capabilities = provider.GetRequiredService<Capabilities>();
+
+        Assert.False(capabilities.CanAssignTickets);
+
+        provider.GetRequiredService<TokenStore>().Set(
+            "a-token",
+            "agent@example.com",
+            Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001"),
+            ["Agent"],
+            isStaff: true);
+
+        Assert.True(capabilities.CanAssignTickets);
     }
 }

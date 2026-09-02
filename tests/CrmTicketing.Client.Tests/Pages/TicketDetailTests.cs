@@ -142,7 +142,8 @@ public sealed class TicketDetailTests : BunitContext
 
     private StubTicketsApiClient Arrange(
         string uri = "http://localhost/tickets/11111111-1111-1111-1111-111111111111",
-        bool signedIn = true)
+        bool signedIn = true,
+        bool isStaff = true)
     {
         var stub = new StubTicketsApiClient();
         stub.Reads.Add(Ticket());
@@ -151,11 +152,21 @@ public sealed class TicketDetailTests : BunitContext
 
         if (signedIn)
         {
-            tokens.Set("a-token", "agent@example.com", UserId, ["Agent"], isStaff: true);
+            tokens.Set(
+                "a-token",
+                isStaff ? "agent@example.com" : "customer@example.com",
+                UserId,
+                isStaff ? ["Agent"] : ["Customer"],
+                isStaff);
         }
 
         Services.AddSingleton<ITicketsApiClient>(stub);
         Services.AddSingleton(tokens);
+
+        // Story 10. The default stays staff, so every test written before this story
+        // keeps the behaviour it was written against.
+        Services.AddSingleton(new Capabilities(tokens));
+
         Services.AddScoped<TicketMetadataProvider>();
         Services.GetRequiredService<BunitNavigationManager>().NavigateTo(uri);
 
@@ -437,5 +448,100 @@ public sealed class TicketDetailTests : BunitContext
 
         Assert.Contains("Comments", page.Markup, StringComparison.Ordinal);
         Assert.Single(page.FindAll("[data-testid=comments-empty]"));
+    }
+
+    // ---- Story 10: the role matrix. Same ticket, same stub, differing only by role ----
+
+    [Fact]
+    public void Detail_AsACustomer_ShowsNoAssignmentSection()
+    {
+        Arrange(isStaff: false);
+
+        var page = RenderDetail();
+
+        Assert.DoesNotContain("Assign to me", ButtonLabels(page));
+        Assert.DoesNotContain("Unassign", ButtonLabels(page));
+
+        // The fallback span renders whenever both buttons are hidden, so gating only
+        // the buttons would leave a Customer reading about an assignment workflow they
+        // have no part in - and which is false whenever the ticket is unassigned.
+        Assert.DoesNotContain("Assigned to someone else.", page.Markup, StringComparison.Ordinal);
+
+        // The heading goes with it. A heading over an empty div is not an explanation.
+        // Asserted on the test id rather than the word "Assignment": a substring match
+        // on a common noun would fail for the wrong reason the day some other section
+        // uses it.
+        Assert.Empty(page.FindAll("[data-testid=assignment-section]"));
+    }
+
+    [Fact]
+    public void Detail_AsStaff_ShowsTheAssignmentSection()
+    {
+        // The mirror of the test above. Without it, that one passes for a page that
+        // renders no assignment section to anybody.
+        Arrange(isStaff: true);
+
+        var page = RenderDetail();
+
+        Assert.Single(page.FindAll("[data-testid=assignment-section]"));
+        Assert.Contains("Assign to me", ButtonLabels(page));
+    }
+
+    [Fact]
+    public void Detail_AsACustomer_StillShowsTransitions()
+    {
+        // Finding 1 made visible. RequesterAllowedTransitions has no endpoint, so the
+        // client cannot learn it, and gating these buttons would mean a second copy of
+        // an authorisation rule. A Customer still sees moves the API may refuse with
+        // 403, and story 08's message rendering is what makes that legible.
+        //
+        // If #51 lands and a later story gates these, this is the test that should
+        // fail and be deliberately changed.
+        var stub = Arrange(isStaff: false);
+        stub.Reads[0] = Ticket(status: "Open");
+
+        var page = RenderDetail();
+        var expected = stub.Metadata.Transitions["Open"];
+
+        // Without this the foreach below iterates zero times over an empty map and the
+        // test passes having asserted nothing - confirmed by mutation: emptying
+        // Transitions["Open"] left this test green.
+        Assert.NotEmpty(expected);
+
+        foreach (var target in expected)
+        {
+            Assert.Contains(ButtonLabels(page), label => label == target);
+        }
+    }
+
+    [Fact]
+    public void Detail_AsACustomer_StillShowsTheEditForm()
+    {
+        // PATCH /api/tickets/{id} carries no staff policy, so a requester editing
+        // their own ticket is a rule the API permits. Hiding the form would be a
+        // client-only gate with no API counterpart.
+        Arrange(isStaff: false);
+
+        var page = RenderDetail();
+
+        Assert.Single(page.FindAll("form"));
+        Assert.NotNull(page.Find("#edit-title"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ClosedTicket_OffersNoTransitions_ForEitherRole(bool isStaff)
+    {
+        // Role decides whether a control exists; state decides whether it is offered.
+        // A Closed ticket offers nothing because Transitions["Closed"] is empty, and
+        // story 10 did not convert that into a role check.
+        var stub = Arrange(isStaff: isStaff);
+        stub.Reads[0] = Ticket(status: "Closed");
+
+        var page = RenderDetail();
+
+        Assert.Empty(stub.Metadata.Transitions["Closed"]);
+        Assert.Contains("No further moves", page.Markup, StringComparison.Ordinal);
     }
 }
