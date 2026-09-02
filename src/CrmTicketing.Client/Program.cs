@@ -24,6 +24,12 @@ builder.Services.AddHttpClient<SystemApiClient>(client =>
 // process serves many users and a singleton token store would share one user's
 // credentials with everyone. ClientCompositionTests pins this.
 builder.Services.AddSingleton<TokenStore>();
+
+// Singleton, matching TokenStore. It holds no state of its own and reads a
+// singleton, so the two lifetimes cannot diverge - the failure story 08 found when
+// a scoped TokenStore gave BearerTokenHandler a different instance than the page.
+builder.Services.AddSingleton<Capabilities>();
+
 builder.Services.AddScoped<BearerTokenHandler>();
 
 // Signing in is how the token is obtained, so AuthApiClient carries no handler.

@@ -2,6 +2,7 @@
 @inject ITicketsApiClient TicketsApi
 @inject TicketMetadataProvider Metadata
 @inject TokenStore Tokens
+@inject Capabilities Can
 @inject NavigationManager Navigation
 
 <PageTitle>@(_ticket?.Title ?? "Ticket")</PageTitle>
@@ -81,6 +82,13 @@ else
         </div>
     }
 
+@* The whole section, heading included. The fallback span below renders whenever
+   both buttons are hidden, so gating only the buttons would show a Customer text
+   about an assignment workflow they have no part in — and which is false whenever
+   the ticket is unassigned. An absent section says the feature is not theirs. *@
+@if (Can.CanAssignTickets)
+{
+    <div data-testid="assignment-section">
     <h2 class="h5">Assignment</h2>
     <div class="d-flex gap-2 mb-3">
         @* Only the action that would change something is offered. Each button was
@@ -106,6 +114,8 @@ else
             <span class="text-muted small">Assigned to someone else.</span>
         }
     </div>
+    </div>
+}
 
     <h2 class="h5">Edit</h2>
     <EditForm Model="_edit" OnValidSubmit="SaveEdit" FormName="edit-ticket">
@@ -182,11 +192,13 @@ else
             ? targets
             : [];
 
-    private bool CanAssignToMe => Tokens.IsSignedIn && Tokens.UserId != Guid.Empty;
+    // Role first: a Customer never assigns, whatever the ticket's state. The id check
+    // stays because "Assign to me" needs an id to send.
+    private bool CanAssign => Can.CanAssignTickets && Tokens.UserId != Guid.Empty;
 
     /// <summary>Offered only when it would change the assignee.</summary>
     private bool ShowAssignToMe =>
-        CanAssignToMe && _ticket is not null && _ticket.AssigneeId != Tokens.UserId;
+        CanAssign && _ticket is not null && _ticket.AssigneeId != Tokens.UserId;
 
     /// <summary>
     /// Offered only when the ticket is assigned to the caller. Assignment is
@@ -194,7 +206,7 @@ else
     /// not an action this screen offers; taking it with "Assign to me" is.
     /// </summary>
     private bool ShowUnassign =>
-        CanAssignToMe && _ticket is not null && _ticket.AssigneeId == Tokens.UserId;
+        CanAssign && _ticket is not null && _ticket.AssigneeId == Tokens.UserId;
 
     protected override async Task OnParametersSetAsync()
     {

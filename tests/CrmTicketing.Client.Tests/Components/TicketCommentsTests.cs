@@ -113,6 +113,12 @@ public sealed class TicketCommentsTests : BunitContext
 
         Services.AddSingleton<ITicketsApiClient>(stub);
         Services.AddSingleton(tokens);
+
+        // Story 10: the toggle now asks Capabilities instead of reading IsStaff
+        // inline. Only this registration changes — every assertion below is story 09's,
+        // unedited, which is what makes the move a refactor rather than a rewrite.
+        Services.AddSingleton(new Capabilities(tokens));
+
         Services.GetRequiredService<BunitNavigationManager>()
             .NavigateTo($"http://localhost/tickets/{TicketId}");
 

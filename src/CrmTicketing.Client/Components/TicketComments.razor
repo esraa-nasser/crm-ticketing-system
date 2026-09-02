@@ -1,5 +1,5 @@
 @inject ITicketsApiClient TicketsApi
-@inject TokenStore Tokens
+@inject Capabilities Can
 @inject NavigationManager Navigation
 
 @if (_loading)
@@ -72,7 +72,7 @@ else
         <textarea id="comment-body" class="form-control" rows="3"
                   disabled="@_busy" value="@_body" @onchange="OnBodyChanged"></textarea>
 
-        @if (Tokens.IsStaff)
+        @if (Can.CanWriteInternalComments)
         {
             @* Staff only. The API refuses an internal comment from anyone else with a
                403 regardless of what this renders — this hides a control the caller
